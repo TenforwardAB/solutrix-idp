@@ -1,0 +1,97 @@
+name: CI Development Workflow
+
+on:
+  push:
+    branches:
+      - development
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: api_user
+          POSTGRES_PASSWORD: api_password
+          POSTGRES_DB: test_db
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      run: |
+        npm install
+
+    - name: Create .env file
+      run: |
+        cat <<EOT > .env
+        ENABLE_GEOIP=true
+        ALLOWED_COUNTRIES=SE,NO,DK
+        ALLOW_PRIVATE=false
+        PORT=5000
+        DATABASE_URL=postgresql://api_user:api_password@localhost:5432/test_db
+        AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        AZURE_STORAGE_CONTAINER=${{ secrets.AZURE_STORAGE_CONTAINER }}
+        LAB_AZURE_STORAGE_CONTAINER=${{ secrets.LAB_AZURE_STORAGE_CONTAINER }}
+        EOT
+
+    - name: Wait for Postgres to start
+      run: |
+        for i in {1..30}; do
+          if pg_isready -h localhost -p 5432; then
+            echo "Postgres is ready"
+            break
+          fi
+          echo "Waiting for Postgres..."
+          sleep 2
+        done
+
+    - name: Run migrations
+      run: |
+        npm run migrate
+
+    - name: Build the app
+      run: |
+        npm run build
+
+    - name: Start the app
+      run: |
+        nohup npm start > app.log 2>&1 &
+
+    - name: Wait for the app to start
+      run: |
+        for i in {1..30}; do
+          status_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000 || echo "000")
+          if [ "$status_code" -eq 404 ]; then
+            echo "App is ready (returned 404)"
+            break
+          fi
+          echo "Waiting for the app (current status: $status_code)..."
+          sleep 2
+        done
+        if [ "$status_code" -ne 404 ]; then
+          echo "App failed to start within the expected time."
+          exit 1
+        fi
+        
+
+    - name: Test login endpoint
+      run: |
+        curl -X POST http://localhost:5000/api/auth/login \
+          -H "Content-Type: application/json" \
+          -d '{"username":"spock", "password":"qwerty123!"}' \
+          | grep -q "token" && echo "Login successful" || { echo "Login failed"; exit 1; }
+
+    - name: Cleanup
+      run: |
+        pkill -f "node"
