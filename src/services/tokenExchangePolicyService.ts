@@ -1,6 +1,6 @@
 import models from "../config/db.js";
-import type { TokenExchangePolicyAttributes } from "../models/token_exchange_policy.js";
-import type { TokenExchangeEventAttributes } from "../models/token_exchange_event.js";
+import type { token_exchange_policiesAttributes } from "../models/token_exchange_policies.js";
+import type { token_exchange_eventsAttributes } from "../models/token_exchange_events.js";
 
 const NORMALIZED_WILDCARD = "*";
 
@@ -26,6 +26,33 @@ export interface FindPolicyOptions {
     requestedAudience: string;
     actorPresent: boolean;
 }
+
+type TokenExchangePolicyAttributes = Omit<
+    token_exchange_policiesAttributes,
+    "subjectTokenTypes" | "audiences" | "scopes"
+> & {
+    subjectTokenTypes: string[];
+    audiences: string[];
+    scopes?: string[] | null;
+};
+
+type TokenExchangeEventAttributes = Omit<
+    token_exchange_eventsAttributes,
+    "requestedScopes" | "grantedScopes"
+> & {
+    requestedScopes?: string[] | null;
+    grantedScopes?: string[] | null;
+};
+
+const coercePolicy = (record: any): TokenExchangePolicyAttributes => {
+    const base = record.get({ plain: true }) as token_exchange_policiesAttributes;
+    return {
+        ...base,
+        subjectTokenTypes: normalizeArray(base.subjectTokenTypes),
+        audiences: normalizeArray(base.audiences),
+        scopes: base.scopes ? normalizeArray(base.scopes) : null,
+    };
+};
 
 export interface PolicyMatch {
     policy: TokenExchangePolicyAttributes;
@@ -77,9 +104,9 @@ export const findApplicablePolicy = async (options: FindPolicyOptions): Promise<
     });
 
     for (const record of records) {
-        const policy = record.get({ plain: true }) as TokenExchangePolicyAttributes;
+        const policy = coercePolicy(record);
         if (
-            matchesSubject(policy.subject, options.subject) &&
+            matchesSubject(policy.subject ?? null, options.subject) &&
             matchesTokenType(policy.subjectTokenTypes, options.subjectTokenType) &&
             matchesAudience(policy.audiences, options.requestedAudience) &&
             matchesActorRequirement(policy.actorTokenRequired, options.actorPresent)
@@ -111,18 +138,18 @@ export const logTokenExchangeEvent = async (entry: ExchangeEventLog): Promise<vo
     try {
         const payload: Partial<TokenExchangeEventAttributes> = {
             clientId: entry.clientId,
-            policyId: entry.policyId ?? null,
-            subject: entry.subject ?? null,
+            policyId: entry.policyId ?? undefined,
+            subject: entry.subject ?? undefined,
             subjectTokenType: entry.subjectTokenType,
-            subjectTokenId: entry.subjectTokenId ?? null,
-            requestedAudience: entry.requestedAudience ?? null,
-            grantedAudience: entry.grantedAudience ?? null,
-            requestedScopes: entry.requestedScopes ?? null,
-            grantedScopes: entry.grantedScopes ?? null,
-            actorSubject: entry.actorSubject ?? null,
+            subjectTokenId: entry.subjectTokenId ?? undefined,
+            requestedAudience: entry.requestedAudience ?? undefined,
+            grantedAudience: entry.grantedAudience ?? undefined,
+            requestedScopes: entry.requestedScopes ?? undefined,
+            grantedScopes: entry.grantedScopes ?? undefined,
+            actorSubject: entry.actorSubject ?? undefined,
             success: entry.success,
-            error: entry.error ?? null,
-            issuedTokenId: entry.issuedTokenId ?? null,
+            error: entry.error ?? undefined,
+            issuedTokenId: entry.issuedTokenId ?? undefined,
         };
         await models.token_exchange_events.create(payload as any);
     } catch (error) {
