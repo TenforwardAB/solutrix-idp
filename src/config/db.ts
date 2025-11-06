@@ -1,18 +1,16 @@
-import {Sequelize, QueryTypes} from 'sequelize'; // Import necessary Sequelize components
-import dotenv from 'dotenv';
+import { Sequelize, QueryTypes } from "sequelize";
+import dotenv from "dotenv";
 import { WildduckNodeSDK } from "wildduck-nodesdk";
-import  {PdnsNodeSDK} from "pdns-nodesdk";
 import * as process from "node:process";
 
-const initModels = require('../models/init-models.js');
+import initModels from "../models/init-models.js";
 
 dotenv.config();
 
 export const wds = new WildduckNodeSDK(process.env.WD_API_KEY as string, process.env.WD_API_URL as string);
-export const pdns = new PdnsNodeSDK(process.env.PDNS_API_KEY as string, process.env.PDNS_API_URL as string);
 
 export const sequelize = new Sequelize(process.env.DATABASE_URL as string, {
-    dialect: 'postgres',
+    dialect: "postgres",
     logging: false,
     pool: {
         max: 5,
@@ -29,9 +27,9 @@ const models = initModels(sequelize);
 export const testDatabaseConnection = async (): Promise<void> => {
     try {
         await sequelize.authenticate();
-        console.log('Connection to the database has been established successfully.');
+        console.log("Connection to the database has been established successfully.");
     } catch (error) {
-        console.error('Unable to connect to the database:', error);
+        console.error("Unable to connect to the database:", error);
     }
 };
 
@@ -45,7 +43,7 @@ export const query = async (queryText: string, params?: any[], queryType?: Query
         });
         return result;
     } catch (error) {
-        console.error('Error executing query:', error);
+        console.error("Error executing query:", error);
         throw error;
     }
 };

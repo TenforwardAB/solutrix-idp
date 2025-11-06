@@ -1,0 +1,327 @@
+import { Request, Response } from "express";
+import crypto from "node:crypto";
+import jose from "node-jose";
+import models from "../config/db.js";
+
+const toStringArray = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+        return value.map((item) => String(item).trim()).filter((item) => item.length > 0);
+    }
+    if (typeof value === "string") {
+        return value
+            .split(/[\s,]+/)
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0);
+    }
+    return [];
+};
+
+const ensureJson = (value: unknown, fallback: Record<string, unknown> | unknown[] = {}): any => {
+    if (value === undefined || value === null) {
+        return fallback;
+    }
+    if (typeof value === "object") {
+        return value;
+    }
+    if (typeof value === "string") {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return fallback;
+        }
+    }
+    return fallback;
+};
+
+export const listClients = async (_req: Request, res: Response): Promise<void> => {
+    const clients = await models.oidc_clients.findAll({ order: [["createdAt", "DESC"]] });
+    const payload = clients.map((client) => {
+        const data = client.get({ plain: true }) as any;
+        delete data.clientSecret;
+        return data;
+    });
+    res.json(payload);
+};
+
+export const getClient = async (req: Request, res: Response): Promise<void> => {
+    const client = await models.oidc_clients.findByPk(req.params.id);
+    if (!client) {
+        res.status(404).json({ error: "client_not_found" });
+        return;
+    }
+    const data = client.get({ plain: true }) as any;
+    delete data.clientSecret;
+    res.json(data);
+};
+
+export const createClient = async (req: Request, res: Response): Promise<void> => {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const redirectUris = toStringArray(req.body.redirect_uris ?? req.body.redirectUris);
+    const grantTypes = toStringArray(req.body.grant_types ?? req.body.grantTypes);
+    const scopes = toStringArray(req.body.scopes);
+
+    if (!name || redirectUris.length === 0 || grantTypes.length === 0) {
+        res.status(400).json({ error: "invalid_client_payload" });
+        return;
+    }
+
+    const clientId = crypto.randomUUID();
+    const clientSecret = crypto.randomBytes(32).toString("hex");
+
+    const record = await models.oidc_clients.create({
+        name,
+        clientId,
+        clientSecret,
+        redirectUris,
+        grantTypes,
+        scopes,
+    });
+
+    res.status(201).json({
+        id: record.get("id"),
+        client_id: clientId,
+        client_secret: clientSecret,
+        name,
+        redirect_uris: redirectUris,
+        grant_types: grantTypes,
+        scopes,
+    });
+};
+
+export const updateClient = async (req: Request, res: Response): Promise<void> => {
+    const client = await models.oidc_clients.findByPk(req.params.id);
+    if (!client) {
+        res.status(404).json({ error: "client_not_found" });
+        return;
+    }
+
+    const updates: Record<string, unknown> = {};
+
+    if (req.body.name) {
+        updates.name = String(req.body.name).trim();
+    }
+    if (req.body.redirect_uris || req.body.redirectUris) {
+        const redirectUris = toStringArray(req.body.redirect_uris ?? req.body.redirectUris);
+        if (redirectUris.length === 0) {
+            res.status(400).json({ error: "redirect_uris_required" });
+            return;
+        }
+        updates.redirectUris = redirectUris;
+    }
+    if (req.body.grant_types || req.body.grantTypes) {
+        const grantTypes = toStringArray(req.body.grant_types ?? req.body.grantTypes);
+        if (grantTypes.length === 0) {
+            res.status(400).json({ error: "grant_types_required" });
+            return;
+        }
+        updates.grantTypes = grantTypes;
+    }
+    if (req.body.scopes) {
+        updates.scopes = toStringArray(req.body.scopes);
+    }
+    if (req.body.rotate_secret === true) {
+        updates.clientSecret = crypto.randomBytes(32).toString("hex");
+    }
+
+    await client.update(updates);
+    const payload = client.get({ plain: true }) as any;
+    const response: Record<string, unknown> = {
+        id: payload.id,
+        client_id: payload.clientId,
+        name: payload.name,
+        redirect_uris: payload.redirectUris,
+        grant_types: payload.grantTypes,
+        scopes: payload.scopes,
+    };
+
+    if (updates.clientSecret) {
+        response.client_secret = updates.clientSecret;
+    }
+
+    res.json(response);
+};
+
+export const deleteClient = async (req: Request, res: Response): Promise<void> => {
+    const deleted = await models.oidc_clients.destroy({ where: { id: req.params.id } });
+    if (deleted === 0) {
+        res.status(404).json({ error: "client_not_found" });
+        return;
+    }
+    res.status(204).send();
+};
+
+export const listServiceProviders = async (_req: Request, res: Response): Promise<void> => {
+    const providers = await models.saml_service_providers.findAll({ order: [["createdAt", "DESC"]] });
+    res.json(providers.map((provider) => provider.get({ plain: true })));
+};
+
+export const getServiceProvider = async (req: Request, res: Response): Promise<void> => {
+    const provider = await models.saml_service_providers.findByPk(req.params.id);
+    if (!provider) {
+        res.status(404).json({ error: "service_provider_not_found" });
+        return;
+    }
+    res.json(provider.get({ plain: true }));
+};
+
+export const createServiceProvider = async (req: Request, res: Response): Promise<void> => {
+    const entityId = typeof req.body.entity_id === "string" ? req.body.entity_id.trim() : "";
+    const metadataXml = typeof req.body.metadata_xml === "string" ? req.body.metadata_xml : undefined;
+    const acsEndpoints = toStringArray(req.body.acs ?? req.body.acs_endpoints ?? req.body.acsEndpoints);
+    const binding = typeof req.body.binding === "string" ? req.body.binding.trim() : "";
+    const attributeMapping = ensureJson(req.body.attr_mapping ?? req.body.attribute_mapping ?? req.body.attributeMapping, {});
+
+    if (!entityId || acsEndpoints.length === 0 || !binding) {
+        res.status(400).json({ error: "invalid_service_provider_payload" });
+        return;
+    }
+
+    const record = await models.saml_service_providers.create({
+        entityId,
+        metadataXml,
+        acsEndpoints,
+        binding,
+        attributeMapping,
+    });
+
+    res.status(201).json(record.get({ plain: true }));
+};
+
+export const updateServiceProvider = async (req: Request, res: Response): Promise<void> => {
+    const provider = await models.saml_service_providers.findByPk(req.params.id);
+    if (!provider) {
+        res.status(404).json({ error: "service_provider_not_found" });
+        return;
+    }
+
+    const updates: Record<string, unknown> = {};
+
+    if (req.body.entity_id || req.body.entityId) {
+        updates.entityId = String(req.body.entity_id ?? req.body.entityId).trim();
+    }
+    if (req.body.metadata_xml) {
+        updates.metadataXml = String(req.body.metadata_xml);
+    }
+    if (req.body.acs || req.body.acs_endpoints || req.body.acsEndpoints) {
+        const acsEndpoints = toStringArray(req.body.acs ?? req.body.acs_endpoints ?? req.body.acsEndpoints);
+        if (acsEndpoints.length === 0) {
+            res.status(400).json({ error: "acs_endpoints_required" });
+            return;
+        }
+        updates.acsEndpoints = acsEndpoints;
+    }
+    if (req.body.binding) {
+        updates.binding = String(req.body.binding).trim();
+    }
+    if (req.body.attr_mapping || req.body.attribute_mapping || req.body.attributeMapping) {
+        updates.attributeMapping = ensureJson(
+            req.body.attr_mapping ?? req.body.attribute_mapping ?? req.body.attributeMapping,
+            {},
+        );
+    }
+
+    await provider.update(updates);
+    res.json(provider.get({ plain: true }));
+};
+
+export const deleteServiceProvider = async (req: Request, res: Response): Promise<void> => {
+    const deleted = await models.saml_service_providers.destroy({ where: { id: req.params.id } });
+    if (deleted === 0) {
+        res.status(404).json({ error: "service_provider_not_found" });
+        return;
+    }
+    res.status(204).send();
+};
+
+export const rotateSigningKey = async (_req: Request, res: Response): Promise<void> => {
+    const keystore = jose.JWK.createKeyStore();
+    const key = await keystore.generate("RSA", 2048, { use: "sig", alg: "RS256" });
+    const publicKey = key.toPEM();
+    const privateKey = key.toPEM(true);
+    const keyId = crypto.randomBytes(4).toString("hex");
+
+    const record = await models.jwt_rsa256_keys.create({
+        publicKey,
+        privateKey,
+        keyId,
+        isInvalid: false,
+    });
+
+    await record.reload();
+
+    res.status(201).json({
+        key_id: record.get("keyId"),
+        public_key: publicKey,
+        created_at: record.get("createdAt"),
+    });
+};
+
+export const listPolicies = async (_req: Request, res: Response): Promise<void> => {
+    const policies = await models.identity_policies.findAll({ order: [["createdAt", "DESC"]] });
+    res.json(policies.map((policy) => policy.get({ plain: true })));
+};
+
+export const getPolicy = async (req: Request, res: Response): Promise<void> => {
+    const policy = await models.identity_policies.findByPk(req.params.id);
+    if (!policy) {
+        res.status(404).json({ error: "policy_not_found" });
+        return;
+    }
+    res.json(policy.get({ plain: true }));
+};
+
+export const createPolicy = async (req: Request, res: Response): Promise<void> => {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const targetType = typeof req.body.target_type === "string" ? req.body.target_type.trim() : "";
+    const targetId = typeof req.body.target_id === "string" ? req.body.target_id.trim() : undefined;
+    const policy = ensureJson(req.body.policy, {});
+
+    if (!name || !targetType) {
+        res.status(400).json({ error: "invalid_policy_payload" });
+        return;
+    }
+
+    const record = await models.identity_policies.create({
+        name,
+        targetType,
+        targetId: targetId || null,
+        policy,
+    });
+
+    res.status(201).json(record.get({ plain: true }));
+};
+
+export const updatePolicy = async (req: Request, res: Response): Promise<void> => {
+    const policy = await models.identity_policies.findByPk(req.params.id);
+    if (!policy) {
+        res.status(404).json({ error: "policy_not_found" });
+        return;
+    }
+
+    const updates: Record<string, unknown> = {};
+    if (req.body.name) {
+        updates.name = String(req.body.name).trim();
+    }
+    if (req.body.target_type) {
+        updates.targetType = String(req.body.target_type).trim();
+    }
+    if (req.body.target_id !== undefined) {
+        const value = req.body.target_id === null ? null : String(req.body.target_id).trim();
+        updates.targetId = value;
+    }
+    if (req.body.policy !== undefined) {
+        updates.policy = ensureJson(req.body.policy, {});
+    }
+
+    await policy.update(updates);
+    res.json(policy.get({ plain: true }));
+};
+
+export const deletePolicy = async (req: Request, res: Response): Promise<void> => {
+    const deleted = await models.identity_policies.destroy({ where: { id: req.params.id } });
+    if (deleted === 0) {
+        res.status(404).json({ error: "policy_not_found" });
+        return;
+    }
+    res.status(204).send();
+};

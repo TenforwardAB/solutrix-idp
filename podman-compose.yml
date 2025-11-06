@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  idp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: solutrix-idp
+    depends_on:
+      idpdb:
+        condition: service_healthy
+    env_file:
+      - .env
+    command: >
+      sh -c "npm run migrate && npm run gen:models && npm start"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - idp-net
+
+  idpdb:
+    image: docker.io/library/postgres:16-alpine
+    container_name: idpdb
+    environment:
+      POSTGRES_USER: api_user
+      POSTGRES_PASSWORD: 2U8pwtA9xm
+      POSTGRES_DB: idp
+    volumes:
+      - idpdb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U api_user -d idp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - idp-net
+
+volumes:
+  idpdb-data:
+
+networks:
+  idp-net:
+    driver: bridge

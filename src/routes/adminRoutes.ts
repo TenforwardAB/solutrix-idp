@@ -1,101 +1,47 @@
-/**
- * Copyright (C) 2024 [TSEI]
- *
- * Created on 2024-09-23 :: 14:00 BY andrek
- */
-import express from "express";
-import * as userController from "../controllers/userController";
-import { authMiddleware } from "../middleware/authMiddleware";
-import { checkUserHasRole } from "../middleware/checkUserRoleMiddleware";
-import * as jwksController from "../controllers/jwksController";
+import { Router } from "express";
+import {
+    createClient,
+    deleteClient,
+    getClient,
+    listClients,
+    updateClient,
+    createServiceProvider,
+    deleteServiceProvider,
+    getServiceProvider,
+    listServiceProviders,
+    updateServiceProvider,
+    rotateSigningKey,
+    createPolicy,
+    deletePolicy,
+    getPolicy,
+    listPolicies,
+    updatePolicy,
+} from "../controllers/adminController.js";
 
-const router = express.Router();
+const router = Router();
 
-router.get(
-  "/customers",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.getAllCustomers
-);
-router.get(
-  "/customers/:id",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.getCustomerById
-);
-router.post(
-  "/customers",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.createCustomer
-);
-router.put(
-  "/customers/:id",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.updateCustomer
-);
-router.delete(
-  "/customers/:id",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.deleteCustomer
-);
+// OIDC Clients
+router.get("/clients", listClients);
+router.get("/clients/:id", getClient);
+router.post("/clients", createClient);
+router.put("/clients/:id", updateClient);
+router.delete("/clients/:id", deleteClient);
 
-router.get(
-  "/users",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.getAllUsers
-);
-router.get(
-  "/users/:id",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.getUserById
-);
-router.post(
-  "/users",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.createUser
-);
-router.put(
-  "/users/:id",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.updateUser
-);
-router.delete(
-  "/users/:id",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  userController.deleteUser
-);
+// SAML Service Providers
+router.get("/sps", listServiceProviders);
+router.get("/sps/:id", getServiceProvider);
+router.post("/sps", createServiceProvider);
+router.put("/sps/:id", updateServiceProvider);
+router.delete("/sps/:id", deleteServiceProvider);
 
-router.post(
-  "/keys/generate",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  jwksController.generateKey
-);
-router.post(
-  "/keys/generate/:customerId",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  jwksController.addKeyForCustomer
-);
-router.delete(
-  "/keys/:keyId",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  jwksController.deleteKeyByKeyId
-);
-router.delete(
-  "/keys/customer/:customerId",
-  authMiddleware,
-  checkUserHasRole("Admiral"),
-  jwksController.deleteKeysByCustomerId
-);
+// Signing keys
+router.post("/keys/rotate", rotateSigningKey);
+
+// Policies
+router.get("/policies", listPolicies);
+router.get("/policies/:id", getPolicy);
+router.post("/policies", createPolicy);
+router.put("/policies/:id", updatePolicy);
+router.delete("/policies/:id", deletePolicy);
 
 export default router;

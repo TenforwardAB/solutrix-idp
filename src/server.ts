@@ -1,55 +1,56 @@
-import express, { Application } from "express";
 import cors from "cors";
+import express from "express";
 import morgan from "morgan";
-import authRoutes from "./routes/authRoutes";
-import adminRoutes from "./routes/adminRoutes";
-import userRoutes from "./routes/userRoutes";
-import licenseRoute from "./routes/licenseRoute";
-import fileTrekkerRoutes from "./routes/fileTrekkerRoutes";
-import  mailrouter  from "./routes"
-import dnsRoutes from "./routes/dnsRoutes"
 import dotenv from "dotenv";
-import {logger} from "./services/loggerService";
-import multer from "multer";
+import getProvider from "./oidc/provider.js";
+import authRoutes from "./routes/authRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
 
 dotenv.config();
-const upload = multer();
-const app: Application = express();
 
-logger.info("Starting Solutrix-API")
+const parseCorsOrigins = (): cors.CorsOptions["origin"] => {
+    const originsEnv = process.env.CORS_ORIGINS;
+    if (!originsEnv) {
+        return false;
+    }
+    const origins = originsEnv
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+    return origins.length === 0 ? false : origins;
+};
 
-// Set up logging middleware
-app.use(morgan("combined"));
+const bootstrap = async (): Promise<void> => {
+    const app = express();
+    app.disable("x-powered-by");
+    app.set("trust proxy", true);
 
-// Set up CORS
-app.use(
-    cors({
-        origin: ["https://localhost:5173","https://127.0.0.1:5173", "http://localhost:5173","http://127.0.0.1:5173"], // Specify the exact origin
-        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "X-Verify-Code-Secret"], // Define the necessary headers explicitly
-        credentials: true, // Allow credentials like cookies, authorization headers, etc.
-    })
-);
+    app.use(
+        cors({
+            origin: parseCorsOrigins(),
+            credentials: true,
+        }),
+    );
 
-app.options("*", cors());
+    app.use(morgan(process.env.HTTP_LOGGER_FORMAT || "combined"));
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: false }));
 
-// Parse JSON requests
-app.use(express.json({ limit: '50mb' }));
+    const provider = await getProvider();
 
-// Auth routes
-app.use("/api/auth", authRoutes);
+    app.use("/api/global/admin", adminRoutes);
+    app.use("/interaction", authRoutes);
+    app.use(provider.callback());
 
-app.use("/api/v1/admin", adminRoutes);
-app.use("/api/v1/users", userRoutes);
-app.use("/api/v1/license", licenseRoute);
-app.use("/api/v1/fileTrekker", fileTrekkerRoutes);
-app.use("/api/v1/dns", dnsRoutes);
-app.use("/api/v1/mail", mailrouter);
+    const port = Number(process.env.PORT || 8080);
+    const host = process.env.HOST || "0.0.0.0";
 
+    app.listen(port, host, () => {
+        console.log(`Solutrix Identity Provider listening on http://${host}:${port}`);
+    });
+};
 
-const PORT: number = parseInt(process.env.PORT || '8080');
-
-// Start the server
-app.listen(PORT, "0.0.0.0", () =>
-  console.log(`Server running on port ${PORT}`)
-);
+bootstrap().catch((error) => {
+    console.error("Failed to start Solutrix Identity Provider", error);
+    process.exit(1);
+});

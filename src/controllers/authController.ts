@@ -1,525 +1,374 @@
-import bcrypt from "bcryptjs";
-import {Request, Response} from "express";
-import { Op } from 'sequelize';
-import {generateToken, verifyToken} from "../services/jwtService";
-import {fetchUserPermissions} from '../services/authService';
-import { MessageService } from '../services/mail/messageService'
-import moment from "moment";
-import models from "../config/db";
-import {wds} from "../config/db";
-import dotenv from "dotenv";
-import { v4 as uuidv4 } from 'uuid';
+import { Request, Response } from "express";
+import getProvider from "../oidc/provider.js";
+import {
+    authenticateWildDuckUser,
+    fetchWildDuckAccount,
+    mergeIdpLoginMetadata,
+} from "../services/wildduckUserService.js";
+import { wds } from "../config/db.js";
+import type { Provider } from "oidc-provider";
 
-const messageService = new MessageService();
+type InteractionDetails = Awaited<ReturnType<Provider["interactionDetails"]>>;
 
-dotenv.config();
-
-const WD_API_URL = process.env.WD_API_URL as string;
-const WD_API_KEY = process.env.WD_API_KEY as string;
-
-interface RegisterRequestBody {
-    username: string;
-    password: string;
-    email: string;
-    customerid: string;
-}
-
-interface LoginRequestBody {
-    username: string;
-    password: string;
-}
-
-const expiryMinutes = parseInt(process.env.ACCESS_TOKEN_EXPIRY_MINUTES || '10', 10);
-
-const generateTokens = async (user: any, cid: string) => {
-    const accessExp = moment().add(expiryMinutes, 'minutes').unix();
-    const refreshExp = moment().add(1, 'year').unix();
-
-    const accessToken = await generateToken({
-        id: user.userid,
-        customerid: user.customerid,
-        cid,
-    });
-
-    const refreshToken = await generateToken({
-        id: user.userid,
-        cid,
-    }, true);
-
-    await models.whitelisted_tokens.create({
-        token: accessToken,
-        token_type: 'ACCESS',
-        expires_at: moment.unix(accessExp).toDate(),
-    });
-
-    await models.whitelisted_tokens.create({
-        token: refreshToken,
-        token_type: 'REFRESH',
-        expires_at: moment.unix(refreshExp).toDate(),
-    });
-
-    return {accessToken, refreshToken, accessExp, refreshExp};
+const escapeHtml = (value?: string): string => {
+    if (!value) {
+        return "";
+    }
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 };
 
-const getUserRolesAndToken = async (user: any, cid: string) => {
+const renderLoginTemplate = (options: {
+    uid: string;
+    clientName: string;
+    scope?: string;
+    username?: string;
+    error?: string;
+}): string => {
+    const { uid, clientName, scope, username, error } = options;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(clientName)} &middot; Sign in</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+        }
 
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            display: flex;
+            min-height: 100vh;
+            margin: 0;
+            align-items: center;
+            justify-content: center;
+            background: #0b1929;
+            background: radial-gradient(circle at 10% 20%, #1b2530 0%, #0b1929 90%);
+        }
 
-    const role= user.role
-    let isAdmiral = role === 'Admiral';
+        main {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 32px;
+            width: min(420px, calc(100% - 32px));
+            box-shadow: 0 18px 40px rgba(11, 25, 41, 0.35);
+            backdrop-filter: blur(18px);
+            color: #f6f7fb;
+        }
 
+        h1 {
+            margin-top: 0;
+            font-size: 1.75rem;
+            font-weight: 600;
+        }
 
+        p.scope {
+            opacity: 0.75;
+            font-size: 0.9rem;
+            margin-bottom: 24px;
+        }
 
-    const userToken = await generateToken({
-        id: user.userid,
-        customerid: user.customerid,
-        email: user.email,
-        legacy_cid: user.customer?.legacy_cid,
-        isAdmiral,
-        role: role,
-    }, true);
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
 
-    return {userToken, isAdmiral};
+        label {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-weight: 500;
+        }
+
+        input {
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(11, 25, 41, 0.5);
+            color: inherit;
+            font-size: 1rem;
+        }
+
+        input:focus {
+            outline: 2px solid rgba(83, 187, 255, 0.6);
+            outline-offset: 1px;
+        }
+
+        button {
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #4cc2ff 0%, #5777ff 100%);
+            color: #0b1929;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: transform 120ms ease, box-shadow 120ms ease;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(87, 119, 255, 0.3);
+        }
+
+        .error {
+            background: rgba(255, 85, 89, 0.18);
+            border: 1px solid rgba(255, 85, 89, 0.4);
+            color: #ff8587;
+            padding: 12px 14px;
+            border-radius: 10px;
+        }
+
+        .footer {
+            margin-top: 24px;
+            font-size: 0.8rem;
+            opacity: 0.5;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>${escapeHtml(clientName)}</h1>
+    ${scope ? `<p class="scope">Requesting: ${escapeHtml(scope)}</p>` : ""}
+    ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
+    <form method="post" action="/interaction/${encodeURIComponent(uid)}/login">
+        <input type="hidden" name="uid" value="${escapeHtml(uid)}" />
+        <label>
+            Email address
+            <input type="email" name="username" autocomplete="username" required value="${escapeHtml(username)}" />
+        </label>
+        <label>
+            Password
+            <input type="password" name="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit">Continue</button>
+    </form>
+    <div class="footer">Solutrix Identity Provider</div>
+</main>
+</body>
+</html>`;
 };
 
-async function logActivity(
-    type: string,
-    userid: string,
-    useremail: string,
-    customerid: string,
-    activityInfo: object
-): Promise<void> {
-    await models.activity_log.create({
-        type,
-        userid,
-        useremail,
-        customerid,
-        activity_info: activityInfo,
+const renderLoginView = async (
+    provider: Provider,
+    res: Response,
+    interaction: InteractionDetails,
+    options?: { error?: string; username?: string; status?: number },
+) => {
+    const clientId = interaction.params?.client_id as string | undefined;
+    const client = clientId ? await provider.Client.find(clientId) : undefined;
+
+    const username =
+        options?.username ??
+        (interaction.lastSubmission && typeof interaction.lastSubmission.login === "object"
+            ? interaction.lastSubmission.login.login_hint
+            : undefined) ??
+        (typeof interaction.params?.login_hint === "string" ? interaction.params.login_hint : undefined);
+
+    const html = renderLoginTemplate({
+        uid: interaction.uid,
+        clientName: client?.metadata?.client_name || clientId || "OIDC Client",
+        scope: typeof interaction.params?.scope === "string" ? interaction.params.scope : undefined,
+        username,
+        error: options?.error,
     });
-}
 
+    res.status(options?.status ?? 200).type("html").send(html);
+};
 
-export const wd_login = async (req: Request, res: Response): Promise<Response | void> => {
-    const {username, password}: LoginRequestBody = req.body;
-    console.log(username, password);
+const ensureGrant = async (
+    provider: Provider,
+    interaction: InteractionDetails,
+    accountId?: string,
+): Promise<string | undefined> => {
+    const { grantId: existingGrantId, params, prompt } = interaction;
+    const details = prompt?.details || {};
+    let grant = existingGrantId ? await provider.Grant.find(existingGrantId) : undefined;
 
-    try {
-        const wildDuckAuthResponse = await wds.authentication.authenticate(username, password);
-
-        if (!wildDuckAuthResponse.success || !wildDuckAuthResponse.id) {
-            return res.status(401).json({error: 'Invalid credentials (WildDuck)'});
+    if (!grant) {
+        if (!accountId) {
+            return existingGrantId;
         }
-
-        // Fetch user data from WildDuck API
-        const wildDuckUser = await wds.users.getUser(wildDuckAuthResponse.id);
-
-        if (!wildDuckUser || !wildDuckUser.success) {
-            return res.status(401).json({error: 'User not found in WildDuck'});
-        }
-
-        const {
-            id: userid,
-            address: email,
-            internalData,
-            activated,
-            suspended,
-            disabled
-        } = wildDuckUser;
-
-        if (!activated || suspended || disabled) {
-            return res.status(403).json({error: 'User account is not active'});
-        }
-
-        const {role, cid: customerid} = internalData;
-
-        // Handle failed login attempts
-        const failRecord = await models.failed_logins.findOne({
-            where: {userid},
+        grant = new provider.Grant({
+            accountId,
+            clientId: params?.client_id as string,
         });
+    }
 
-        if (failRecord && failRecord.fail_count >= 5) {
-            const nextAllowedLogin = new Date(failRecord.last_failed_at || new Date());
+    if (typeof params?.scope === "string" && params.scope.length > 0) {
+        grant.addOIDCScope(params.scope);
+    }
 
-            if (failRecord.fail_count >= 11) {
-                nextAllowedLogin.setHours(nextAllowedLogin.getHours() + 1);
-            } else {
-                const additionalMinutes = 15 + (failRecord.fail_count - 5) * 5;
-                nextAllowedLogin.setMinutes(nextAllowedLogin.getMinutes() + additionalMinutes);
-            }
+    if (Array.isArray(details.missingOIDCScope) && details.missingOIDCScope.length > 0) {
+        grant.addOIDCScope(details.missingOIDCScope.join(" "));
+    }
 
-            if (new Date() < nextAllowedLogin) {
-                await models.failed_logins.update(
-                    {fail_count: failRecord.fail_count + 1, last_failed_at: new Date()},
-                    {where: {userid}}
-                );
-                await logActivity(
-                    "login",
-                    userid,
-                    email || "",
-                    customerid,
-                    {
-                        login_type: "local",
-                        status: "fail",
-                        reason: "Too many login attempts",
-                        activity_ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
-                    }
-                );
-                return res.status(429).json({
-                    error: `Too many failed attempts. Try again after ${nextAllowedLogin.toISOString()}`,
-                });
+    if (details.missingOIDCClaims) {
+        grant.addOIDCClaims(details.missingOIDCClaims);
+    }
+
+    if (details.missingResourceScopes) {
+        for (const [resource, scopes] of Object.entries(details.missingResourceScopes)) {
+            if (Array.isArray(scopes) && scopes.length > 0) {
+                grant.addResourceScope(resource, scopes.join(" "));
             }
         }
+    }
 
-        // Reset failed login streak on success
-        if (failRecord) {
-            await models.failed_logins.update(
-                {fail_count: 0, last_failed_at: null},
-                {where: {userid}}
-            );
-        }
+    return grant.save();
+};
 
-        // Generate tokens and log the successful login
-        const {accessToken, refreshToken, accessExp, refreshExp} = await generateTokens(
-            {userid, email, customerid},
-            customerid
-        );
+export const showInteraction = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const provider = await getProvider();
+        const interaction = await provider.interactionDetails(req, res);
 
-        const {userToken, isAdmiral} = await getUserRolesAndToken(
-            {userid, email, customerid, role},
-            customerid
-        );
+        if (interaction.prompt?.name && interaction.prompt.name !== "login") {
+            const accountId = interaction.session?.accountId;
+            const grantId = await ensureGrant(provider, interaction, accountId);
 
-        console.log("IA: ", isAdmiral);
-        console.log("AE: ", accessExp);
-        console.log("RE: ", refreshExp);
-
-        await logActivity(
-            "login",
-            userid,
-            email || "",
-            customerid,
-            {
-                login_type: "local",
-                status: "ok",
-                activity_ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
-            }
-        );
-
-        const up = await fetchUserPermissions(userid)
-
-            return res.json({
-                identifyer: {
-                    id: userid,
-                    cid: customerid,
-                    email: email,
-                    isadmiral: isAdmiral,
-                    permissions: up?.permissions
+            await provider.interactionFinished(
+                req,
+                res,
+                {
+                    consent: grantId ? { grantId } : {},
                 },
-                access: {token: accessToken, exp: accessExp},
-                refresh: {token: refreshToken, exp: refreshExp},
-                user: {token: userToken, exp: refreshExp},
+                { mergeWithLastSubmission: true },
+            );
+            return;
+        }
+
+        await renderLoginView(provider, res, interaction);
+    } catch (error) {
+        console.error("Failed to render interaction", error);
+        res.status(500).json({ error: "interaction_error" });
+    }
+};
+
+export const login_wd = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const provider = await getProvider();
+        const interaction = await provider.interactionDetails(req, res);
+
+        if (interaction.prompt?.name && interaction.prompt.name !== "login") {
+            res.redirect(`/interaction/${encodeURIComponent(interaction.uid)}`);
+            return;
+        }
+
+        const username = typeof req.body.username === "string" ? req.body.username.trim() : "";
+        const password = typeof req.body.password === "string" ? req.body.password : "";
+
+        if (!username || !password) {
+            await renderLoginView(provider, res, interaction, {
+                error: "Username and password are required.",
+                username,
+                status: 400,
+            });
+            return;
+        }
+
+        let userId: string;
+
+        try {
+            userId = await authenticateWildDuckUser(username, password);
+        } catch {
+            await renderLoginView(provider, res, interaction, {
+                error: "Invalid username or password.",
+                username,
+                status: 401,
+            });
+            return;
+        }
+
+        const account = await fetchWildDuckAccount(userId);
+
+        if (!account.activated || account.suspended || account.disabled) {
+            await renderLoginView(provider, res, interaction, {
+                error: "Account is not active. Contact the administrator.",
+                username,
+                status: 403,
+            });
+            return;
+        }
+
+        const nowIso = new Date().toISOString();
+        const clientId = interaction.params?.client_id as string | undefined;
+        const loginIp =
+            (typeof req.headers["x-forwarded-for"] === "string"
+                ? req.headers["x-forwarded-for"].split(",")[0]?.trim()
+                : undefined) || req.socket.remoteAddress || undefined;
+
+        try {
+            const { metaData, internalData } = mergeIdpLoginMetadata(account, {
+                clientId,
+                scope: typeof interaction.params?.scope === "string" ? interaction.params.scope : undefined,
+                loginIp,
+                userAgent: req.headers["user-agent"],
+                timestamp: nowIso,
             });
 
-    } catch (error: any) {
-        if (error?.response) {
-            return res.status(error.response.status).json({error: error.response.data});
-        }
-        return res.status(401).json({error: error.message});
-    }
-};
-
-export const preAuth = async (req: Request, res: Response): Promise<Response> => {
-    const { username, scope } = req.body;
-    console.log(username);
-
-    if (typeof username !== "string" || username.trim() === "") {
-        return res.status(400).json({ exists: false, message: "username is required" });
-    }
-
-    try {
-
-        const result = await wds.authentication.preAuth(username, scope || 'master');
-
-        return res.json({ exists: result.success });
-    } catch (rawErr) {
-        console.log(typeof rawErr);
-
-        const errMsg =
-            rawErr instanceof Error
-                ? rawErr.message
-                : typeof rawErr === "string"
-                    ? rawErr
-                    : JSON.stringify(rawErr);
-
-        if (errMsg.includes("HTTP 403")) {
-            return res.json({ exists: false });
+            await wds.users.updateUser(account.id, {
+                metaData,
+                internalData,
+            });
+        } catch (metadataError) {
+            console.warn("Failed to update WildDuck metadata", metadataError);
         }
 
-        return res
-            .status(502)
-            .json({ exists: false, message: "upstream error" });
-    }
-};
+        const grantId = await ensureGrant(provider, interaction, account.id);
 
-export const resolveAddressInfo = async (req: Request, res: Response): Promise<Response> => {
-    const { username, scope } = req.body;
-    console.log(username);
-
-    if (typeof username !== "string" || username.trim() === "") {
-        return res.status(400).json({ exists: false, message: "username is required" });
-    }
-
-    try {
-
-        const result = await wds.addresses.resolveAddressInfo(username);
-
-        return res.json({ exists: result.success });
-    } catch (rawErr) {
-
-        const errMsg =
-            rawErr instanceof Error
-                ? rawErr.message
-                : typeof rawErr === "string"
-                    ? rawErr
-                    : JSON.stringify(rawErr);
-
-        if (errMsg.includes("HTTP 404")) {
-            return res.json({ exists: false });
-        }
-
-        return res
-            .status(502)
-            .json({ exists: false, message: "upstream error" });
-    }
-};
-
-export const refreshToken = async (req: Request, res: Response): Promise<Response | void> => {
-    let refreshToken;
-    try {
-        const cookieHeader = req.headers['cookie'];
-        if (cookieHeader) {
-            refreshToken = cookieHeader
-                .split('; ')
-                .find(cookie => cookie.startsWith('sid2_'))
-                ?.split('=')[1];
-        }
-        if (!refreshToken) {
-            refreshToken = req.body.refreshToken;
-        }
-    }
-    catch {
-        refreshToken = req.body.refreshToken; // Machine
-    }
-    if (!refreshToken) {
-
-    }
-    console.log(refreshToken);
-
-
-    try {
-        const tokenExists = await models.whitelisted_tokens.findOne({
-            where: {token: refreshToken},
-        });
-
-        if (!tokenExists) {
-            return res.status(401).json({error: 'Refresh token is invalidated'});
-        }
-        const decoded = await verifyToken(refreshToken)
-
-        const {internalData: {customerid}} = await wds.users.getUser(decoded.id);
-
-        const newAccessToken = await generateToken({
-            id: decoded.id,
-            customerid: customerid,
-            cid: decoded.cid,
-        });
-
-        const accessExp = moment().add(expiryMinutes, 'minutes').unix();
-        await models.whitelisted_tokens.create({
-            token: newAccessToken,
-            token_type: 'ACCESS',
-            expires_at: moment.unix(accessExp).toDate(),
-        });
-
-        return res.json({
-            access: {
-                token: newAccessToken,
-                exp: accessExp
-            }
-        });
-
-    } catch (error) {
-        console.error('Error verifying refresh token:', error);
-        return res.status(401).json({error: 'Invalid refresh token'});
-    }
-};
-
-export const getUserPermissions = async (req: Request, res: Response): Promise<Response> => {
-    try {
-        // @ts-ignore
-        const userId = req['X-API-UserID'];
-        if (!userId) {
-            return res.status(400).json({message: 'User ID is missing in the request'});
-        }
-
-        const result = await fetchUserPermissions(userId);
-
-        if (!result) {
-            return res.status(404).json({message: 'Permissions not found for the user'});
-        }
-
-        return res.json(result);
-    } catch (error) {
-        console.error('Error fetching user permissions:', error);
-        return res.status(500).json({message: 'Internal server error'});
-    }
-};
-
-
-export const logout = async (req: Request, res: Response): Promise<void> => {
-    const {accessToken, refreshToken} = req.body;
-
-    if (!accessToken || !refreshToken) {
-        res.status(400).json({message: 'Access token and refresh token are required'});
-        return;
-    }
-
-    try {
-
-        await models.whitelisted_tokens.destroy({
-            where: {
-                token: [accessToken, refreshToken],
+        await provider.interactionFinished(
+            req,
+            res,
+            {
+                login: {
+                    accountId: account.id,
+                    acr: "urn:solutrix:loa:password",
+                    amr: ["pwd"],
+                    remember: true,
+                    ts: Math.floor(Date.now() / 1000),
+                },
+                consent: grantId ? { grantId } : {},
+                meta: {
+                    wildduck: {
+                        email: account.email,
+                        customer_id: account.internalData?.cid,
+                    },
+                },
             },
-        });
-
-        res.status(200).json({message: 'Logged out successfully'});
+            { mergeWithLastSubmission: false },
+        );
     } catch (error) {
-        console.error('Error during logout:', error);
-        res.status(500).json({message: 'An error occurred during logout'});
+        console.error("login_wd error", error);
+        res.status(500).json({ error: "authentication_failed" });
     }
 };
 
-// Generate a 6-digit numeric code
-function generateCode(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
-/**
- * POST /verify-code/send
- * { type: 'mail', target: 'user@example.com' }
- */
-export async function sendVerificationCode(
-    req: Request,
-    res: Response
-): Promise<Response> {
-    const { type, target } = req.body;
-    if (type !== 'mail') {
-        return res
-            .status(400)
-            .json({ success: false, message: 'Only mail verification supported' });
-    }
-    if (typeof target !== 'string' || !target.includes('@')) {
-        return res
-            .status(400)
-            .json({ success: false, message: 'Valid email (target) is required' });
-    }
-
-    const code = generateCode();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
-
+export const abortInteraction = async (req: Request, res: Response): Promise<void> => {
     try {
-        // create a new code record
-        await models.verify_codes.create({
-            id: uuidv4(),
-            type: 'mail',
-            target,
-            code,
-            expiresAt,
-            used: false,
-        });
+        const provider = await getProvider();
+        await provider.interactionDetails(req, res);
 
-        const payload: {
-            mailbox: string;
-            from: { name: string; address: string };
-            replyTo?: { name: string; address: string };
-            to: { name: string; address: string }[];
-            cc?: { name: string; address: string }[];
-            subject: string;
-            text: string;
-            // …plus any other optional fields you might add, e.g. html, attachments, envelope, etc.
-        } = {
-            mailbox: '6831d6b1ac19dd89efe88703',
-            from: {
-                name: 'Solutrix - No Reply',
-                address: 'no-reply@solutrix.io',
+        await provider.interactionFinished(
+            req,
+            res,
+            {
+                error: "access_denied",
+                error_description: "End-User aborted the interaction",
             },
-            to: [
-                {
-                    name: '',           // you can supply a display name if you have one
-                    address: target,    // your original `target` variable
-                }
-            ],
-            subject: 'Your verification code',
-            text:    `Your verification code is: ${code} (valid for 15 minutes)`,
-        };
-
-        await messageService.sendMessage("6831d6b1ac19dd89efe88700", payload);
-
-        return res.json({ success: true, message: 'Verification code sent' });
-    } catch (err: any) {
-        console.error('sendVerificationCode error:', err);
-        return res
-            .status(500)
-            .json({ success: false, message: 'Failed to send verification code' });
+            { mergeWithLastSubmission: false },
+        );
+    } catch (error) {
+        console.error("abortInteraction error", error);
+        res.status(500).json({ error: "interaction_abort_failed" });
     }
-}
-
-/**
- * POST /verify-code/check
- * { type: 'mail', target: 'user@example.com', code: '123456' }
- */
-export async function verifyCode(
-    req: Request,
-    res: Response
-): Promise<Response> {
-    const { type, target, code } = req.body;
-    if (type !== 'mail') {
-        return res
-            .status(400)
-            .json({ success: false, message: 'Only mail verification supported' });
-    }
-    if (!target || !code) {
-        return res
-            .status(400)
-            .json({ success: false, message: 'target and code are required' });
-    }
-
-    try {
-        const record = await models.verify_codes.findOne({
-            where: {
-                type: 'mail',
-                target,
-                code,
-                used:    false,
-                expiresAt: { [Op.gt]: new Date() },
-            },
-        });
-
-        if (!record) {
-            return res
-                .status(400)
-                .json({ success: false, message: 'Invalid or expired code' });
-        }
-
-        // consume it
-        record.used = true;
-        await record.save();
-
-        return res.json({ success: true, message: 'Verified' });
-    } catch (err: any) {
-        console.error('verifyCode error:', err);
-        return res
-            .status(500)
-            .json({ success: false, message: 'Verification failed' });
-    }
-}
-
+};
