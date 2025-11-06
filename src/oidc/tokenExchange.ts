@@ -22,6 +22,12 @@ const GRANT_PARAMETERS = new Set([
 
 const SUPPORTED_TOKEN_TYPES = new Set<string>(["urn:ietf:params:oauth:token-type:access_token"]);
 
+/**
+ * Parse a space-delimited scope string into a set.
+ *
+ * @param value - Input value, typically ctx.oidc.params.scope.
+ * @returns Set of individual scopes.
+ */
 const parseScopeParam = (value: unknown): Set<string> => {
     if (typeof value !== "string") {
         return new Set<string>();
@@ -34,6 +40,12 @@ const parseScopeParam = (value: unknown): Set<string> => {
     );
 };
 
+/**
+ * Convert a scope set back to a string.
+ *
+ * @param scopes - Set of scopes.
+ * @returns Space-delimited scope or undefined.
+ */
 const setToScopeString = (scopes: Set<string>): string | undefined => {
     if (scopes.size === 0) {
         return undefined;
@@ -41,6 +53,12 @@ const setToScopeString = (scopes: Set<string>): string | undefined => {
     return [...scopes].join(" ");
 };
 
+/**
+ * Resolve the requested audience/resource parameter.
+ *
+ * @param ctx - OIDC context.
+ * @returns Audience string.
+ */
 const resolveAudience = (ctx: KoaContextWithOIDC): string => {
     const { params } = ctx.oidc;
 
@@ -70,6 +88,12 @@ const resolveAudience = (ctx: KoaContextWithOIDC): string => {
     return requestedAudience;
 };
 
+/**
+ * Validate the subject token type parameter.
+ *
+ * @param value - Raw parameter value.
+ * @returns Normalized token type.
+ */
 const ensureSupportedSubjectTokenType = (value: unknown): string => {
     if (typeof value !== "string" || value.length === 0) {
         throw new errors.InvalidRequest("subject_token_type must be a non-empty string");
@@ -80,6 +104,12 @@ const ensureSupportedSubjectTokenType = (value: unknown): string => {
     return value;
 };
 
+/**
+ * Validate the actor token type parameter.
+ *
+ * @param value - Raw parameter value.
+ * @returns Normalized token type.
+ */
 const ensureSupportedActorTokenType = (value: unknown): string => {
     if (typeof value !== "string" || value.length === 0) {
         throw new errors.InvalidRequest("actor_token_type must be a non-empty string");
@@ -90,6 +120,13 @@ const ensureSupportedActorTokenType = (value: unknown): string => {
     return value;
 };
 
+/**
+ * Ensure the provided token string is present and non-empty.
+ *
+ * @param value - Raw token.
+ * @param name - Name of the parameter for error messages.
+ * @returns Token string.
+ */
 const getTokenString = (value: unknown, name: string): string => {
     if (typeof value !== "string" || value.length === 0) {
         throw new errors.InvalidRequest(`${name} must be a non-empty string`);
@@ -97,6 +134,11 @@ const getTokenString = (value: unknown, name: string): string => {
     return value;
 };
 
+/**
+ * Validate the requested token type parameter when present.
+ *
+ * @param value - Raw parameter value.
+ */
 const validateRequestedTokenType = (value: unknown): void => {
     if (value === undefined) {
         return;
@@ -109,6 +151,11 @@ const validateRequestedTokenType = (value: unknown): void => {
     }
 };
 
+/**
+ * Register the token exchange grant with oidc-provider.
+ *
+ * @param provider - Active provider instance.
+ */
 export const registerTokenExchangeGrant = (provider: Provider): void => {
     const handler = async (ctx: KoaContextWithOIDC): Promise<void> => {
         const { client } = ctx.oidc;

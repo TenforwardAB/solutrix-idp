@@ -24,6 +24,9 @@ export const sequelize = new Sequelize(process.env.DATABASE_URL as string, {
     },
 });
 const models = initModels(sequelize) as Record<string, any>;
+/**
+ * Verify the Sequelize connection by running authenticate.
+ */
 export const testDatabaseConnection = async (): Promise<void> => {
     try {
         await sequelize.authenticate();
@@ -33,7 +36,13 @@ export const testDatabaseConnection = async (): Promise<void> => {
     }
 };
 
-
+/**
+ * Execute a raw SQL query through Sequelize.
+ *
+ * @param queryText - SQL statement.
+ * @param params - Positional replacements.
+ * @param queryType - Optional query type.
+ */
 export const query = async (queryText: string, params?: any[], queryType?: QueryTypes) => {
     try {
         // Run any SQL query

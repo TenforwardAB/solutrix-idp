@@ -12,6 +12,11 @@ dotenv.config();
 
 let providerInstance: Provider | null = null;
 
+/**
+ * Load active RSA signing keys from the database.
+ *
+ * @returns Populated JWK keystore.
+ */
 const loadSigningKeys = async (): Promise<jose.JWK.KeyStore> => {
     const keystore = jose.JWK.createKeyStore();
     const keyRows = await models.jwt_rsa256_keys.findAll({
@@ -38,6 +43,11 @@ const loadSigningKeys = async (): Promise<jose.JWK.KeyStore> => {
     return keystore;
 };
 
+/**
+ * Read statically configured clients from environment variables.
+ *
+ * @returns Array of client metadata or empty array.
+ */
 const readStaticClients = (): Configuration["clients"] => {
     if (process.env.OIDC_CLIENTS_JSON) {
         try {
@@ -78,6 +88,11 @@ type DbClientRecord = {
     scopes: string[];
 };
 
+/**
+ * Load client definitions from the database.
+ *
+ * @returns Client metadata formatted for oidc-provider.
+ */
 const fetchDbClients = async (): Promise<Configuration["clients"]> => {
     const rows = await models.oidc_clients.findAll({ order: [["createdAt", "ASC"]] });
 
@@ -114,6 +129,11 @@ const fetchDbClients = async (): Promise<Configuration["clients"]> => {
     return normalized;
 };
 
+/**
+ * Derive the issuer URL from environment variables.
+ *
+ * @returns Issuer string.
+ */
 const issuerFromEnv = (): string => {
     const explicitIssuer = process.env.OIDC_ISSUER;
     if (explicitIssuer) {
@@ -123,6 +143,13 @@ const issuerFromEnv = (): string => {
     return `http://localhost:${port}`;
 };
 
+/**
+ * Resolve an account during OIDC interactions.
+ *
+ * @param ctx - Koa context with OIDC details.
+ * @param sub - Subject identifier.
+ * @returns Account object or undefined.
+ */
 const findAccount: Configuration["findAccount"] = async (ctx: KoaContextWithOIDC, sub: string | undefined) => {
     try {
         if (!sub) {
@@ -142,6 +169,11 @@ const findAccount: Configuration["findAccount"] = async (ctx: KoaContextWithOIDC
     }
 };
 
+/**
+ * Lazily initialize and return the singleton oidc-provider instance.
+ *
+ * @returns Provider instance.
+ */
 export const getProvider = async (): Promise<Provider> => {
     if (providerInstance) {
         return providerInstance;

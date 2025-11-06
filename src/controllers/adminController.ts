@@ -5,6 +5,12 @@ import models, { sequelize } from "../config/db.js";
 import getProvider from "../oidc/provider.js";
 import weakCache from "oidc-provider/lib/helpers/weak_cache.js";
 
+/**
+ * Normalize an incoming value into an array of trimmed strings.
+ *
+ * @param value - Raw value that may be a string, array, or other type.
+ * @returns Array of non-empty trimmed strings.
+ */
 const toStringArray = (value: unknown): string[] => {
     if (Array.isArray(value)) {
         return value.map((item) => String(item).trim()).filter((item) => item.length > 0);
@@ -18,6 +24,13 @@ const toStringArray = (value: unknown): string[] => {
     return [];
 };
 
+/**
+ * Convert the provided value into JSON, returning a fallback if conversion fails.
+ *
+ * @param value - Potential JSON input.
+ * @param fallback - Default object or array when parsing fails.
+ * @returns Parsed value or fallback.
+ */
 const ensureJson = (value: unknown, fallback: Record<string, unknown> | unknown[] = {}): any => {
     if (value === undefined || value === null) {
         return fallback;
@@ -35,6 +48,12 @@ const ensureJson = (value: unknown, fallback: Record<string, unknown> | unknown[
     return fallback;
 };
 
+/**
+ * Map synchronization errors into HTTP status codes and payloads.
+ *
+ * @param error - Error thrown during provider synchronization.
+ * @returns Status and payload for the HTTP response.
+ */
 const mapClientSyncError = (
     error: unknown,
 ): { status: number; payload: Record<string, unknown> } => {
@@ -61,6 +80,12 @@ const mapClientSyncError = (
 };
 
 
+/**
+ * List all registered OIDC/OAuth clients.
+ *
+ * @param _req - Express request (unused).
+ * @param res - Express response used to send the list.
+ */
 export const listClients = async (_req: Request, res: Response): Promise<void> => {
     const clients = await models.oidc_clients.findAll({ order: [["createdAt", "DESC"]] });
     const payload = clients.map((client: any) => {
@@ -71,6 +96,12 @@ export const listClients = async (_req: Request, res: Response): Promise<void> =
     res.json(payload);
 };
 
+/**
+ * Retrieve a specific client by its database identifier.
+ *
+ * @param req - Express request containing path param `id`.
+ * @param res - Express response used to return the client payload.
+ */
 export const getClient = async (req: Request, res: Response): Promise<void> => {
     const client = await models.oidc_clients.findByPk(req.params.id);
     if (!client) {
@@ -82,6 +113,12 @@ export const getClient = async (req: Request, res: Response): Promise<void> => {
     res.json(data);
 };
 
+/**
+ * Create a new client and register it with the OIDC provider.
+ *
+ * @param req - Request body with client attributes.
+ * @param res - Response used to emit the created client.
+ */
 export const createClient = async (req: Request, res: Response): Promise<void> => {
     const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     const redirectUris = toStringArray(req.body.redirect_uris ?? req.body.redirectUris);
@@ -138,6 +175,12 @@ export const createClient = async (req: Request, res: Response): Promise<void> =
     }
 };
 
+/**
+ * Update an existing client and synchronize changes to the provider.
+ *
+ * @param req - Request containing path param `id` and payload updates.
+ * @param res - Response used to return the updated record.
+ */
 export const updateClient = async (req: Request, res: Response): Promise<void> => {
     const transaction = await sequelize.transaction();
     try {
@@ -214,6 +257,12 @@ export const updateClient = async (req: Request, res: Response): Promise<void> =
     }
 };
 
+/**
+ * Delete a client and remove it from the provider cache.
+ *
+ * @param req - Request with path param `id`.
+ * @param res - Response, returns 204 on success.
+ */
 export const deleteClient = async (req: Request, res: Response): Promise<void> => {
     const record = await models.oidc_clients.findByPk(req.params.id);
     if (!record) {
@@ -234,11 +283,23 @@ export const deleteClient = async (req: Request, res: Response): Promise<void> =
     res.status(204).send();
 };
 
+/**
+ * List all SAML service providers.
+ *
+ * @param _req - Express request (unused).
+ * @param res - Express response used to send the list.
+ */
 export const listServiceProviders = async (_req: Request, res: Response): Promise<void> => {
     const providers = await models.saml_service_providers.findAll({ order: [["createdAt", "DESC"]] });
     res.json(providers.map((provider: any) => provider.get({ plain: true })));
 };
 
+/**
+ * Retrieve a SAML service provider by id.
+ *
+ * @param req - Request containing path param `id`.
+ * @param res - Response used to return the service provider.
+ */
 export const getServiceProvider = async (req: Request, res: Response): Promise<void> => {
     const provider = await models.saml_service_providers.findByPk(req.params.id);
     if (!provider) {
@@ -248,6 +309,12 @@ export const getServiceProvider = async (req: Request, res: Response): Promise<v
     res.json(provider.get({ plain: true }));
 };
 
+/**
+ * Create a SAML service provider definition.
+ *
+ * @param req - Request body with service provider configuration.
+ * @param res - Response that returns the created record.
+ */
 export const createServiceProvider = async (req: Request, res: Response): Promise<void> => {
     const entityId = typeof req.body.entity_id === "string" ? req.body.entity_id.trim() : "";
     const metadataXml = typeof req.body.metadata_xml === "string" ? req.body.metadata_xml : undefined;
@@ -271,6 +338,12 @@ export const createServiceProvider = async (req: Request, res: Response): Promis
     res.status(201).json(record.get({ plain: true }));
 };
 
+/**
+ * Update an existing SAML service provider.
+ *
+ * @param req - Request with path param `id` and payload updates.
+ * @param res - Response containing the updated record.
+ */
 export const updateServiceProvider = async (req: Request, res: Response): Promise<void> => {
     const provider: any = await models.saml_service_providers.findByPk(req.params.id);
     if (!provider) {
@@ -308,6 +381,12 @@ export const updateServiceProvider = async (req: Request, res: Response): Promis
     res.json(provider.get({ plain: true }));
 };
 
+/**
+ * Delete a SAML service provider.
+ *
+ * @param req - Request with path param `id`.
+ * @param res - Response returning 204 on success.
+ */
 export const deleteServiceProvider = async (req: Request, res: Response): Promise<void> => {
     const deleted = await models.saml_service_providers.destroy({ where: { id: req.params.id } });
     if (deleted === 0) {
@@ -317,6 +396,12 @@ export const deleteServiceProvider = async (req: Request, res: Response): Promis
     res.status(204).send();
 };
 
+/**
+ * Generate and persist a new RSA signing key pair.
+ *
+ * @param _req - Request object (unused).
+ * @param res - Response sending the new key metadata.
+ */
 export const rotateSigningKey = async (_req: Request, res: Response): Promise<void> => {
     const keystore = jose.JWK.createKeyStore();
     const key = await keystore.generate("RSA", 2048, { use: "sig", alg: "RS256" });
@@ -340,11 +425,23 @@ export const rotateSigningKey = async (_req: Request, res: Response): Promise<vo
     });
 };
 
+/**
+ * List all identity policies.
+ *
+ * @param _req - Request object (unused).
+ * @param res - Response containing policy list.
+ */
 export const listPolicies = async (_req: Request, res: Response): Promise<void> => {
     const policies = await models.identity_policies.findAll({ order: [["createdAt", "DESC"]] });
     res.json(policies.map((policy: any) => policy.get({ plain: true })));
 };
 
+/**
+ * Retrieve an identity policy.
+ *
+ * @param req - Request with path param `id`.
+ * @param res - Response containing the policy.
+ */
 export const getPolicy = async (req: Request, res: Response): Promise<void> => {
     const policy = await models.identity_policies.findByPk(req.params.id);
     if (!policy) {
@@ -354,6 +451,12 @@ export const getPolicy = async (req: Request, res: Response): Promise<void> => {
     res.json(policy.get({ plain: true }));
 };
 
+/**
+ * Create a new identity policy.
+ *
+ * @param req - Request payload describing the policy.
+ * @param res - Response with the created policy.
+ */
 export const createPolicy = async (req: Request, res: Response): Promise<void> => {
     const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
     const targetType = typeof req.body.target_type === "string" ? req.body.target_type.trim() : "";
@@ -375,6 +478,12 @@ export const createPolicy = async (req: Request, res: Response): Promise<void> =
     res.status(201).json(record.get({ plain: true }));
 };
 
+/**
+ * Update an existing identity policy.
+ *
+ * @param req - Request with path param `id` and updates.
+ * @param res - Response containing the updated policy.
+ */
 export const updatePolicy = async (req: Request, res: Response): Promise<void> => {
     const policy: any = await models.identity_policies.findByPk(req.params.id);
     if (!policy) {
@@ -401,6 +510,12 @@ export const updatePolicy = async (req: Request, res: Response): Promise<void> =
     res.json(policy.get({ plain: true }));
 };
 
+/**
+ * Delete an identity policy.
+ *
+ * @param req - Request with path param `id`.
+ * @param res - Response returning 204 on success.
+ */
 export const deletePolicy = async (req: Request, res: Response): Promise<void> => {
     const deleted = await models.identity_policies.destroy({ where: { id: req.params.id } });
     if (deleted === 0) {
@@ -409,6 +524,52 @@ export const deletePolicy = async (req: Request, res: Response): Promise<void> =
     }
     res.status(204).send();
 };
+/**
+ * Deduplicate and normalize grant type strings.
+ *
+ * @param grantTypes - Raw grant type values.
+ * @returns Unique, trimmed grant types.
+ */
+const normalizeGrantTypes = (grantTypes: string[]): string[] =>
+    Array.from(
+        new Set(
+            grantTypes
+                .map((grant) => String(grant).trim())
+                .filter((grant) => grant.length > 0),
+        ),
+    );
+
+/**
+ * Register client metadata with the oidc-provider instance.
+ *
+ * @param provider - Active provider instance.
+ * @param metadata - Client metadata payload.
+ * @param clientId - Identifier used to refresh caches.
+ */
+const registerProviderClient = async (
+    provider: Awaited<ReturnType<typeof getProvider>>,
+    metadata: Record<string, unknown>,
+    clientId: string,
+): Promise<void> => {
+    const providerClient = new provider.Client(metadata);
+    await provider.Client.adapter.upsert(providerClient.clientId, providerClient.metadata());
+
+    const internals = weakCache(provider);
+    if (internals) {
+        internals.staticClients ||= new Map();
+        internals.staticClients.set(providerClient.clientId, providerClient.metadata());
+        internals.dynamicClients?.clear?.();
+    }
+
+    const hydrated = await provider.Client.find(clientId);
+    console.log("[admin] Provider cache refreshed for %s: %s", clientId, hydrated ? "success" : "missing");
+};
+
+/**
+ * Persist the client definition inside oidc-provider.
+ *
+ * @param client - Client details to synchronize.
+ */
 const syncProviderClient = async (client: {
     clientId: string;
     clientSecret: string;
@@ -418,12 +579,9 @@ const syncProviderClient = async (client: {
     name?: string;
 }): Promise<void> => {
     const provider = await getProvider();
+    const grantTypes = normalizeGrantTypes(client.grantTypes);
 
-    const grantTypes = Array.from(
-        new Set(client.grantTypes.map((grant) => String(grant).trim()).filter((grant) => grant.length > 0)),
-    );
-
-    const metadata = {
+    const metadata: Record<string, unknown> = {
         client_id: client.clientId,
         client_secret: client.clientSecret,
         redirect_uris: client.redirectUris,
@@ -434,37 +592,25 @@ const syncProviderClient = async (client: {
     };
 
     if (client.name) {
-        (metadata as Record<string, unknown>).client_name = client.name;
+        metadata.client_name = client.name;
     }
 
     const existing = await provider.Client.find(client.clientId);
-    console.log(
-        "[admin] %s provider client %s",
-        existing ? "Updating" : "Adding",
-        client.clientId,
-    );
-    console.log("[admin] Provider client metadata prepared for %s", client.clientId);
+    console.log("[admin] %s provider client %s", existing ? "Updating" : "Adding", client.clientId);
 
     try {
-        const providerClient = new provider.Client(metadata);
-        await provider.Client.adapter.upsert(providerClient.clientId, providerClient.metadata());
-        const hydrated = await provider.Client.find(client.clientId);
-        console.log("[admin] Provider cache refreshed for %s: %s", client.clientId, hydrated ? "success" : "missing");
-
-        const internals = weakCache(provider);
-        if (internals) {
-            if (!internals.staticClients) {
-                internals.staticClients = new Map();
-            }
-            internals.staticClients.set(providerClient.clientId, providerClient.metadata());
-            internals.dynamicClients?.clear?.();
-        }
+        await registerProviderClient(provider, metadata, client.clientId);
     } catch (error) {
         console.error("Failed to synchronize client with provider", error);
         throw error;
     }
 };
 
+/**
+ * Remove a client from the provider and clear cache entries.
+ *
+ * @param clientId - Client identifier to delete.
+ */
 const removeProviderClient = async (clientId: string): Promise<void> => {
     try {
         const provider = await getProvider();

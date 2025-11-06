@@ -4,6 +4,12 @@ import type { token_exchange_eventsAttributes } from "../models/token_exchange_e
 
 const NORMALIZED_WILDCARD = "*";
 
+/**
+ * Normalize a string or array value into a deduplicated string array.
+ *
+ * @param value - Value to normalize.
+ * @returns Array of trimmed strings.
+ */
 const normalizeArray = (value: unknown): string[] => {
     if (Array.isArray(value)) {
         return value
@@ -44,6 +50,9 @@ type TokenExchangeEventAttributes = Omit<
     grantedScopes?: string[] | null;
 };
 
+/**
+ * Convert the raw Sequelize record into a typed policy object.
+ */
 const coercePolicy = (record: any): TokenExchangePolicyAttributes => {
     const base = record.get({ plain: true }) as token_exchange_policiesAttributes;
     return {
@@ -58,6 +67,9 @@ export interface PolicyMatch {
     policy: TokenExchangePolicyAttributes;
 }
 
+/**
+ * Check if the subject matches policy requirements.
+ */
 const matchesSubject = (policySubject: string | null, subject: string | undefined): boolean => {
     if (!policySubject || policySubject === NORMALIZED_WILDCARD) {
         return true;
@@ -68,6 +80,9 @@ const matchesSubject = (policySubject: string | null, subject: string | undefine
     return policySubject === subject;
 };
 
+/**
+ * Check if the subject token type satisfies policy constraints.
+ */
 const matchesTokenType = (policyTypes: string[], presentedType: string): boolean => {
     const normalized = normalizeArray(policyTypes);
     if (normalized.length === 0 || normalized.includes(NORMALIZED_WILDCARD)) {
@@ -76,6 +91,9 @@ const matchesTokenType = (policyTypes: string[], presentedType: string): boolean
     return normalized.includes(presentedType);
 };
 
+/**
+ * Determine whether the requested audience is allowed.
+ */
 const matchesAudience = (policyAudiences: string[], requestedAudience: string): boolean => {
     const normalized = normalizeArray(policyAudiences);
     if (normalized.length === 0 || normalized.includes(NORMALIZED_WILDCARD)) {
@@ -84,6 +102,9 @@ const matchesAudience = (policyAudiences: string[], requestedAudience: string): 
     return normalized.includes(requestedAudience);
 };
 
+/**
+ * Validate whether an actor token presence matches policy expectations.
+ */
 const matchesActorRequirement = (actorRequired: boolean, actorPresent: boolean): boolean => {
     if (!actorRequired) {
         return true;
@@ -91,6 +112,9 @@ const matchesActorRequirement = (actorRequired: boolean, actorPresent: boolean):
     return actorPresent;
 };
 
+/**
+ * Locate the highest priority policy that matches the request.
+ */
 export const findApplicablePolicy = async (options: FindPolicyOptions): Promise<PolicyMatch | null> => {
     const records = await models.token_exchange_policies.findAll({
         where: {
@@ -134,6 +158,9 @@ export interface ExchangeEventLog {
     issuedTokenId?: string | null;
 }
 
+/**
+ * Persist a token exchange audit event.
+ */
 export const logTokenExchangeEvent = async (entry: ExchangeEventLog): Promise<void> => {
     try {
         const payload: Partial<TokenExchangeEventAttributes> = {

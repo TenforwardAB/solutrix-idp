@@ -12,6 +12,9 @@ export interface WildDuckAccount {
     internalData: Record<string, any>;
 }
 
+/**
+ * Safely coerce a value into an object.
+ */
 const toObject = (value: any): Record<string, any> => {
     if (!value) {
         return {};
@@ -29,6 +32,13 @@ const toObject = (value: any): Record<string, any> => {
     return {};
 };
 
+/**
+ * Authenticate a user against the WildDuck API.
+ *
+ * @param username - Login identifier.
+ * @param password - Plaintext password.
+ * @returns WildDuck account id.
+ */
 export const authenticateWildDuckUser = async (username: string, password: string): Promise<string> => {
     const response = await wds.authentication.authenticate(username, password);
 
@@ -39,6 +49,12 @@ export const authenticateWildDuckUser = async (username: string, password: strin
     return response.id as string;
 };
 
+/**
+ * Fetch full user details from WildDuck.
+ *
+ * @param userId - WildDuck account id.
+ * @returns Enriched account metadata.
+ */
 export const fetchWildDuckAccount = async (userId: string): Promise<WildDuckAccount> => {
     const user = await wds.users.getUser(userId);
 
@@ -59,6 +75,9 @@ export const fetchWildDuckAccount = async (userId: string): Promise<WildDuckAcco
     };
 };
 
+/**
+ * Build OIDC claims from a WildDuck account.
+ */
 export const buildOidcClaims = (account: WildDuckAccount): Record<string, any> => {
     const { internalData, metaData } = account;
 
@@ -111,6 +130,9 @@ export const buildOidcClaims = (account: WildDuckAccount): Record<string, any> =
     return claims;
 };
 
+/**
+ * Merge IDP login metadata for persistence in WildDuck.
+ */
 export const mergeIdpLoginMetadata = (
     account: WildDuckAccount,
     updates: {

@@ -17,15 +17,37 @@ const cookieKeyStrings = (process.env.OIDC_COOKIE_KEYS || "default-cookie-secret
     .filter((value) => value.length > 0);
 const interactionCookiePrimaryKey =
     cookieKeyStrings.length > 0 ? cookieKeyStrings[0] : "default-cookie-secret-change-me";
-const signInteractionCookie = (data: string): string =>
-    crypto
+
+/**
+ * Sign an interaction cookie using the configured HMAC secret.
+ *
+ * @param cookieName - Name of the interaction cookie.
+ * @param value - Interaction identifier.
+ * @returns Base64URL encoded signature.
+ */
+const signInteractionCookie = (cookieName: string, value: string): string => {
+    const base = `${cookieName}=${value}`;
+    return crypto
         .createHmac("sha1", interactionCookiePrimaryKey)
-        .update(data)
+        .update(base)
         .digest("base64")
         .replace(/\//g, "_")
         .replace(/\+/g, "-")
         .replace(/=/g, "");
+};
 
+/**
+ * Escape HTML special characters.
+ *
+ * @param value - Raw string.
+ * @returns Escaped string safe for HTML output.
+ */
+/**
+ * Escape HTML special characters.
+ *
+ * @param value - Raw string or undefined.
+ * @returns Escaped string safe for HTML output.
+ */
 const escapeHtml = (value?: string): string => {
     if (!value) {
         return "";
@@ -38,6 +60,22 @@ const escapeHtml = (value?: string): string => {
         .replace(/'/g, "&#039;");
 };
 
+/**
+ * Render the login HTML template shown during OIDC interactions.
+ *
+ * @param options - Template data including UID, client information, and messages.
+ * @returns HTML markup.
+ */
+/**
+ * Render the login HTML template shown during OIDC interactions.
+ *
+ * @param options.uid - Interaction identifier.
+ * @param options.clientName - Display name of the requesting client.
+ * @param options.scope - Requested scope string (optional).
+ * @param options.username - Pre-filled username (optional).
+ * @param options.error - Error message to highlight (optional).
+ * @returns HTML markup.
+ */
 const renderLoginTemplate = (options: {
     uid: string;
     clientName: string;
@@ -174,6 +212,24 @@ const renderLoginTemplate = (options: {
 </html>`;
 };
 
+/**
+ * Render the login view to the response object.
+ *
+ * @param provider - Active OIDC provider.
+ * @param res - Express response object.
+ * @param interaction - Interaction details from oidc-provider.
+ * @param options - Optional template overrides.
+ * @param forcedUid - UID inferred from the route when cookies are missing.
+ */
+/**
+ * Render the login view to the response object.
+ *
+ * @param provider - Active OIDC provider.
+ * @param res - Express response object.
+ * @param interaction - Interaction details from oidc-provider.
+ * @param options - Optional template overrides.
+ * @param forcedUid - UID inferred from the route when cookies are missing.
+ */
 const renderLoginView = async (
     provider: Provider,
     res: Response,
@@ -203,6 +259,22 @@ const renderLoginView = async (
     res.status(options?.status ?? 200).type("html").send(html);
 };
 
+/**
+ * Ensure the interaction has an authorization grant with appropriate scopes.
+ *
+ * @param provider - Active OIDC provider.
+ * @param interaction - Interaction details.
+ * @param accountId - Optional account identifier.
+ * @returns Persisted grant identifier.
+ */
+/**
+ * Ensure the interaction has an authorization grant with appropriate scopes.
+ *
+ * @param provider - Active OIDC provider.
+ * @param interaction - Interaction details.
+ * @param accountId - Optional account identifier.
+ * @returns Persisted grant identifier.
+ */
 const ensureGrant = async (
     provider: Provider,
     interaction: InteractionDetails,
@@ -245,6 +317,12 @@ const ensureGrant = async (
     return grant.save();
 };
 
+/**
+ * Handle GET requests for the interaction route.
+ *
+ * @param req - Express request object.
+ * @param res - Express response used to render the login view.
+ */
 export const showInteraction = async (req: Request, res: Response): Promise<void> => {
     try {
         const provider = await getProvider();
@@ -273,6 +351,12 @@ export const showInteraction = async (req: Request, res: Response): Promise<void
     }
 };
 
+/**
+ * Authenticate the user via WildDuck and finish the interaction.
+ *
+ * @param req - Express request containing login submission.
+ * @param res - Express response returning redirects or errors.
+ */
 export const login_wd = async (req: Request, res: Response): Promise<void> => {
     try {
         const rawUid =
@@ -292,7 +376,7 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
 
             if (!hasCookie) {
                 const baseValue = `${cookieName}=${explicitUid}`;
-                const signature = signInteractionCookie(baseValue);
+                const signature = signInteractionCookie(cookieName, explicitUid);
                 const filtered = existingHeader
                     ? existingHeader
                           .split(/;\s*/)
@@ -343,7 +427,6 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
 
         try {
             userId = await authenticateWildDuckUser(username, password);
-            console.log("Authenticated user", userId);
         } catch {
             await renderLoginView(provider, res, interaction, {
                 error: "Invalid username or password.",
@@ -411,6 +494,12 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
     }
 };
 
+/**
+ * Abort the current interaction.
+ *
+ * @param req - Express request object.
+ * @param res - Response returning a redirect with access denied error.
+ */
 export const abortInteraction = async (req: Request, res: Response): Promise<void> => {
     try {
         const provider = await getProvider();

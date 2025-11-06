@@ -26,23 +26,46 @@ const ttlable = new Set([
     "PushedAuthorizationRequest",
 ]);
 
+/**
+ * Create a new Date object representing the current moment.
+ */
 const now = () => new Date();
 
+/**
+ * Sequelize-backed adapter implementation for oidc-provider.
+ */
 class SequelizeAdapter {
     readonly name: string;
 
+    /**
+     * Construct the adapter for a specific model name.
+     *
+     * @param name - Token or artifact model name.
+     */
     constructor(name: string) {
         this.name = name;
     }
 
+    /**
+     * Ensure the Sequelize connection is established.
+     */
     static async connect(): Promise<void> {
         await sequelize.authenticate();
     }
 
+    /**
+     * Access the backing Sequelize model.
+     */
     private collection() {
         return models.oidc_adapter_store;
     }
 
+    /**
+     * Compute an absolute expiration date from a relative TTL in seconds.
+     *
+     * @param expiresIn - TTL in seconds.
+     * @returns Expiration Date or null.
+     */
     private computeExpires(expiresIn?: number): Date | null {
         if (!expiresIn) {
             return null;
@@ -50,6 +73,13 @@ class SequelizeAdapter {
         return new Date(Date.now() + expiresIn * 1000);
     }
 
+    /**
+     * Insert or update a stored entry.
+     *
+     * @param id - Record identifier.
+     * @param payload - Payload to persist.
+     * @param expiresAt - Optional expiration time.
+     */
     private async upsertEntry(id: string, payload: Payload, expiresAt: Date | null): Promise<void> {
         const storedPayload = { ...payload };
         const entry = {
@@ -74,11 +104,20 @@ class SequelizeAdapter {
         await this.collection().upsert(entry);
     }
 
+    /**
+     * Write a payload with an optional TTL.
+     */
     async upsert(id: string, payload: Payload, expiresIn?: number): Promise<void> {
         const expiresAt = this.computeExpires(expiresIn);
         await this.upsertEntry(id, payload, expiresAt);
     }
 
+    /**
+     * Convert a Sequelize record into a token payload, enforcing invariants.
+     *
+     * @param entry - Sequelize model instance.
+     * @returns Token payload or undefined when missing/expired.
+     */
     private sanitize(entry: any): Payload | undefined {
         if (!entry) {
             return undefined;
@@ -128,6 +167,9 @@ class SequelizeAdapter {
         return payload;
     }
 
+    /**
+     * Locate a record by identifier.
+     */
     async find(id: string): Promise<Payload | undefined> {
         const entry = await this.collection().findOne({ where: { id, name: this.name } });
         if (!entry && this.name === "Interaction") {
@@ -138,20 +180,32 @@ class SequelizeAdapter {
         return this.sanitize(entry);
     }
 
+    /**
+     * Locate a record by user code.
+     */
     async findByUserCode(userCode: string): Promise<Payload | undefined> {
         const entry = await this.collection().findOne({ where: { userCode, name: this.name } });
         return this.sanitize(entry);
     }
 
+    /**
+     * Locate a record by UID.
+     */
     async findByUid(uid: string): Promise<Payload | undefined> {
         const entry = await this.collection().findOne({ where: { uid, name: this.name } });
         return this.sanitize(entry);
     }
 
+    /**
+     * Remove a record by identifier.
+     */
     async destroy(id: string): Promise<void> {
         await this.collection().destroy({ where: { id, name: this.name } });
     }
 
+    /**
+     * Revoke artifacts associated with a grant.
+     */
     async revokeByGrantId(grantId: string): Promise<void> {
         if (!grantable.has(this.name)) {
             return;
@@ -167,10 +221,16 @@ class SequelizeAdapter {
         });
     }
 
+    /**
+     * Mark a record as consumed.
+     */
     async consume(id: string): Promise<void> {
         await this.collection().update({ consumedAt: now() }, { where: { id, name: this.name } });
     }
 
+    /**
+     * Remove expired artifacts.
+     */
     async cleanExpired(): Promise<void> {
         await this.collection().destroy({
             where: {
@@ -181,6 +241,9 @@ class SequelizeAdapter {
         });
     }
 
+    /**
+     * Remove all artifacts for a grantId (used by token exchange logs).
+     */
     async grantCleaner(grantId: string): Promise<void> {
         await this.collection().destroy({ where: { grantId } });
     }
