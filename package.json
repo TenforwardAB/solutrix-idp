@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node -e \"console.log('no tests defined')\"",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc && rsync -av --exclude='node_modules/' --exclude='.github/' --exclude='tmp/' --exclude='dist/' --include='*/' --include='*.js' --exclude='*' . dist/",
+    "build": "tsc && rsync -av --exclude='node_modules/' --exclude='.github/' --exclude='tmp/' --exclude='dist/' --exclude='src/models/generated/' --exclude='test.js' --include='*/' --include='*.js' --exclude='*' . dist/",
     "start": "node dist/server.js",
     "migrate": "sequelize db:migrate --config src/config/config.cjs --migrations-path src/migrations",
     "gen:sql": "node scripts/mk-migration.js",

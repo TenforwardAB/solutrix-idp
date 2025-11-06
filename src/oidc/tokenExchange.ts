@@ -205,10 +205,12 @@ export const registerTokenExchangeGrant = (provider: Provider): void => {
 
             logEntry.requestedScopes = [...requestedScopes];
 
-            const policyScopes = new Set(
-                (policyMatch.policy.scopes ?? [])
-                    .map((scope) => scope.trim())
-                    .filter((scope) => scope.length > 0),
+            const policyScopes = new Set<string>(
+                Array.isArray(policyMatch.policy.scopes)
+                    ? policyMatch.policy.scopes
+                          .map((scope: unknown) => String(scope).trim())
+                          .filter((scope: string) => scope.length > 0)
+                    : [],
             );
 
             if (policyScopes.size > 0 && !policyScopes.has("*")) {

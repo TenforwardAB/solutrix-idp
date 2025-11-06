@@ -63,6 +63,14 @@ class SequelizeAdapter {
             consumedAt: null,
         };
 
+        if (this.name === "Interaction") {
+            console.log("[adapter:Interaction] upsert", {
+                id,
+                expiresAt: expiresAt?.toISOString() ?? null,
+                keys: Object.keys(storedPayload),
+            });
+        }
+
         await this.collection().upsert(entry);
     }
 
@@ -76,20 +84,57 @@ class SequelizeAdapter {
             return undefined;
         }
 
-        if (entry.expiresAt && entry.expiresAt < now()) {
+        const expiresAt: Date | null =
+            typeof entry.get === "function" ? entry.get("expiresAt") : entry.expiresAt ?? null;
+
+        if (expiresAt && expiresAt < now()) {
+            if (this.name === "Interaction") {
+                const entryId = typeof entry.get === "function" ? entry.get("id") : entry.id;
+                console.warn("[adapter:Interaction] expired entry", entryId);
+            }
             void entry.destroy();
             return undefined;
         }
 
-        const payload: Payload = typeof entry.payload === "string" ? JSON.parse(entry.payload) : entry.payload;
-        if (entry.consumedAt) {
-            payload.consumed = entry.consumedAt.getTime() / 1000;
+        const rawPayload = typeof entry.get === "function" ? entry.get("payload") : entry.payload;
+        const payload: Payload =
+            typeof rawPayload === "string" ? JSON.parse(rawPayload) : { ...(rawPayload ?? {}) };
+        // Ensure numeric fields remain numbers after round-trip serialization
+        const numericFields = ["exp", "iat", "nbf", "auth_time"];
+        for (const field of numericFields) {
+            if (typeof payload[field] === "string" && payload[field] !== "") {
+                const parsed = Number(payload[field]);
+                payload[field] = Number.isFinite(parsed) ? parsed : payload[field];
+            }
+        }
+        const consumedAt = typeof entry.get === "function" ? entry.get("consumedAt") : entry.consumedAt;
+        if (consumedAt instanceof Date) {
+            payload.consumed = consumedAt.getTime() / 1000;
+        }
+        if (this.name === "Interaction") {
+            const entryId = typeof entry.get === "function" ? entry.get("id") : entry.id;
+            const payloadKeys = Object.keys(payload);
+            console.log("[adapter:Interaction] sanitize success", entryId, {
+                keys: Object.keys(payload),
+                kind: payload.kind,
+                exp: payload.exp,
+                expType: typeof payload.exp,
+                iatType: typeof payload.iat,
+            });
+            if (payloadKeys.length === 0) {
+                console.warn("[adapter:Interaction] empty payload", entryId, rawPayload);
+            }
         }
         return payload;
     }
 
     async find(id: string): Promise<Payload | undefined> {
         const entry = await this.collection().findOne({ where: { id, name: this.name } });
+        if (!entry && this.name === "Interaction") {
+            console.warn("[adapter:Interaction] find miss", id);
+        } else if (entry && this.name === "Interaction") {
+            console.log("[adapter:Interaction] find hit", id);
+        }
         return this.sanitize(entry);
     }
 

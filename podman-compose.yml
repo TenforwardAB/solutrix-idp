@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        NODE_ENV: ${NODE_ENV:-production}
     container_name: solutrix-idp
     depends_on:
       idpdb:
@@ -12,10 +14,13 @@ services:
     env_file:
       - .env
     command: >
-      sh -c "npm run migrate && npm run gen:models && npm start"
+      sh -c "npm run migrate && npm run gen:models && if [ \"$NODE_ENV\" = 'development' ]; then npm run dev; else npm start; fi"
     ports:
       - "8080:8080"
     restart: unless-stopped
+    volumes:
+      - ./:/app
+      - idp-node-modules:/app/node_modules
     networks:
       - idp-net
 
@@ -39,6 +44,7 @@ services:
 
 volumes:
   idpdb-data:
+  idp-node-modules:
 
 networks:
   idp-net:

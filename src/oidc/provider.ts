@@ -70,6 +70,50 @@ const readStaticClients = (): Configuration["clients"] => {
     ];
 };
 
+type DbClientRecord = {
+    clientId: string;
+    clientSecret: string;
+    redirectUris: string[];
+    grantTypes: string[];
+    scopes: string[];
+};
+
+const fetchDbClients = async (): Promise<Configuration["clients"]> => {
+    const rows = await models.oidc_clients.findAll({ order: [["createdAt", "ASC"]] });
+
+    const normalized = rows.map((row: any) => {
+        const data = row.get({ plain: true }) as DbClientRecord;
+        const redirectUris = Array.isArray(data.redirectUris) ? data.redirectUris : [];
+        const grantTypes = Array.isArray(data.grantTypes) ? data.grantTypes : [];
+        const scopes = Array.isArray(data.scopes) ? data.scopes : [];
+
+        return {
+            client_id: data.clientId,
+            client_secret: data.clientSecret,
+            redirect_uris: redirectUris,
+            grant_types: grantTypes,
+            response_types: grantTypes.includes("implicit") ? ["code", "id_token"] : ["code"],
+            token_endpoint_auth_method: "client_secret_basic",
+            scope: scopes.length > 0 ? scopes.join(" ") : undefined,
+        } satisfies Configuration["clients"][number];
+    });
+
+    console.log(`[oidc] Fetched ${normalized.length} client(s) from database.`);
+    if (normalized.length > 0) {
+        for (const client of normalized) {
+            console.log(
+                "[oidc]   client_id=%s redirect_uris=%j grant_types=%j scope=%s",
+                client.client_id,
+                client.redirect_uris,
+                client.grant_types,
+                client.scope,
+            );
+        }
+    }
+
+    return normalized;
+};
+
 const issuerFromEnv = (): string => {
     const explicitIssuer = process.env.OIDC_ISSUER;
     if (explicitIssuer) {
@@ -106,9 +150,16 @@ export const getProvider = async (): Promise<Provider> => {
     await SequelizeAdapter.connect();
     const keystore = await loadSigningKeys();
 
+    const dbClients = await fetchDbClients();
+    if (dbClients.length === 0) {
+        console.warn("[oidc] No clients found in database; relying on static configuration.");
+    }
+
+    const secureCookies = (process.env.NODE_ENV ?? "development").toLowerCase() === "production";
+
     const configuration: Configuration = {
         adapter: SequelizeAdapter,
-        clients: readStaticClients(),
+        clients: dbClients.length > 0 ? dbClients : readStaticClients(),
         findAccount,
         interactions: {
             url(_ctx: KoaContextWithOIDC, interaction: Interaction) {
@@ -117,8 +168,8 @@ export const getProvider = async (): Promise<Provider> => {
         },
         cookies: {
             keys: (process.env.OIDC_COOKIE_KEYS || "default-cookie-secret-change-me").split(","),
-            long: { signed: true, secure: "auto" },
-            short: { signed: true, secure: "auto" },
+            long: { signed: true, secure: secureCookies ? "auto" : false },
+            short: { signed: true, secure: secureCookies ? "auto" : false },
             names: {
                 session: "idp.sid",
                 interaction: "idp.interaction",
@@ -141,18 +192,16 @@ export const getProvider = async (): Promise<Provider> => {
             token: "/oauth/token",
             jwks: "/oauth/jwks.json",
             userinfo: "/userinfo",
-            registration: "/oauth/register",
             introspection: "/oauth/introspect",
             revocation: "/oauth/revoke",
             end_session: "/oauth/logout",
-            pushed_authorization_request: "/oauth/par",
-            device_authorization: "/oauth/device/code",
         },
         features: {
             devInteractions: { enabled: false },
             revocation: { enabled: true },
             introspection: { enabled: true },
             userinfo: { enabled: true },
+            clientCredentials: { enabled: true },
             backchannelLogout: { enabled: false },
             registration: { enabled: false },
             pushedAuthorizationRequests: { enabled: false },
@@ -186,6 +235,23 @@ export const getProvider = async (): Promise<Provider> => {
     providerInstance = new Provider(issuer, configuration);
     providerInstance.proxy = true;
     registerTokenExchangeGrant(providerInstance);
+    providerInstance.on("authorization.error", (ctx: any, err: any) => {
+        console.error("authorization.error", err.message, {
+            clientId: ctx?.oidc?.client?.clientId,
+            error: err.error,
+            detail: (err as any).error_description,
+        });
+    });
+    providerInstance.on("grant.error", (ctx: any, err: any) => {
+        console.error("grant.error", err.message, {
+            clientId: ctx?.oidc?.client?.clientId,
+            error: err.error,
+            detail: (err as any).error_description,
+        });
+    });
+    providerInstance.on("server_error", (_ctx: any, err: any) => {
+        console.error("server_error", err);
+    });
 
     return providerInstance;
 };

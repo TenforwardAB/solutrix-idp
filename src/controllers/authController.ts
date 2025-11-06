@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import crypto from "node:crypto";
 import getProvider from "../oidc/provider.js";
 import {
     authenticateWildDuckUser,
@@ -9,6 +10,21 @@ import { wds } from "../config/db.js";
 import type { Provider } from "oidc-provider";
 
 type InteractionDetails = Awaited<ReturnType<Provider["interactionDetails"]>>;
+
+const cookieKeyStrings = (process.env.OIDC_COOKIE_KEYS || "default-cookie-secret-change-me")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+const interactionCookiePrimaryKey =
+    cookieKeyStrings.length > 0 ? cookieKeyStrings[0] : "default-cookie-secret-change-me";
+const signInteractionCookie = (data: string): string =>
+    crypto
+        .createHmac("sha1", interactionCookiePrimaryKey)
+        .update(data)
+        .digest("base64")
+        .replace(/\//g, "_")
+        .replace(/\+/g, "-")
+        .replace(/=/g, "");
 
 const escapeHtml = (value?: string): string => {
     if (!value) {
@@ -163,9 +179,11 @@ const renderLoginView = async (
     res: Response,
     interaction: InteractionDetails,
     options?: { error?: string; username?: string; status?: number },
+    forcedUid?: string,
 ) => {
     const clientId = interaction.params?.client_id as string | undefined;
     const client = clientId ? await provider.Client.find(clientId) : undefined;
+    const effectiveUid = forcedUid && forcedUid !== "undefined" ? forcedUid : interaction.uid;
 
     const username =
         options?.username ??
@@ -175,7 +193,7 @@ const renderLoginView = async (
         (typeof interaction.params?.login_hint === "string" ? interaction.params.login_hint : undefined);
 
     const html = renderLoginTemplate({
-        uid: interaction.uid,
+        uid: effectiveUid ?? interaction.uid,
         clientName: client?.metadata?.client_name || clientId || "OIDC Client",
         scope: typeof interaction.params?.scope === "string" ? interaction.params.scope : undefined,
         username,
@@ -231,6 +249,7 @@ export const showInteraction = async (req: Request, res: Response): Promise<void
     try {
         const provider = await getProvider();
         const interaction = await provider.interactionDetails(req, res);
+        const routeUid = typeof req.params.uid === "string" ? req.params.uid : undefined;
 
         if (interaction.prompt?.name && interaction.prompt.name !== "login") {
             const accountId = interaction.session?.accountId;
@@ -247,7 +266,7 @@ export const showInteraction = async (req: Request, res: Response): Promise<void
             return;
         }
 
-        await renderLoginView(provider, res, interaction);
+        await renderLoginView(provider, res, interaction, undefined, routeUid);
     } catch (error) {
         console.error("Failed to render interaction", error);
         res.status(500).json({ error: "interaction_error" });
@@ -256,12 +275,56 @@ export const showInteraction = async (req: Request, res: Response): Promise<void
 
 export const login_wd = async (req: Request, res: Response): Promise<void> => {
     try {
+        const rawUid =
+            (typeof req.body.uid === "string" && req.body.uid.length > 0 ? req.body.uid : undefined) ??
+            (typeof req.params.uid === "string" && req.params.uid.length > 0 ? req.params.uid : undefined);
+        const explicitUid = rawUid && rawUid !== "undefined" ? rawUid : undefined;
+
         const provider = await getProvider();
+
+        if (explicitUid) {
+            // when the cookie is missing, manually seed it before reading interaction details
+            const cookieName = provider.cookieName("interaction");
+            const existingHeader = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+            const hasCookie = existingHeader
+                .split(/;\s*/)
+                .some((part) => part.startsWith(`${cookieName}=`) || part.startsWith(`${cookieName}.sig=`));
+
+            if (!hasCookie) {
+                const baseValue = `${cookieName}=${explicitUid}`;
+                const signature = signInteractionCookie(baseValue);
+                const filtered = existingHeader
+                    ? existingHeader
+                          .split(/;\s*/)
+                          .filter(
+                              (part) =>
+                                  part.length > 0 &&
+                                  !part.startsWith(`${cookieName}=`) &&
+                                  !part.startsWith(`${cookieName}.sig=`),
+                          )
+                    : [];
+                filtered.push(baseValue);
+                filtered.push(`${cookieName}.sig=${signature}`);
+                req.headers.cookie = filtered.join("; ");
+                (req as any).cookies = {
+                    ...(req as any).cookies,
+                    [cookieName]: explicitUid,
+                };
+            }
+        }
+
         const interaction = await provider.interactionDetails(req, res);
 
         if (interaction.prompt?.name && interaction.prompt.name !== "login") {
             res.redirect(`/interaction/${encodeURIComponent(interaction.uid)}`);
             return;
+        }
+
+        if (explicitUid && interaction.uid !== explicitUid) {
+            console.warn("login_wd interaction uid mismatch", {
+                expected: explicitUid,
+                actual: interaction.uid,
+            });
         }
 
         const username = typeof req.body.username === "string" ? req.body.username.trim() : "";
@@ -272,7 +335,7 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
                 error: "Username and password are required.",
                 username,
                 status: 400,
-            });
+            }, explicitUid);
             return;
         }
 
@@ -280,12 +343,13 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
 
         try {
             userId = await authenticateWildDuckUser(username, password);
+            console.log("Authenticated user", userId);
         } catch {
             await renderLoginView(provider, res, interaction, {
                 error: "Invalid username or password.",
                 username,
                 status: 401,
-            });
+            }, explicitUid);
             return;
         }
 
@@ -296,7 +360,7 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
                 error: "Account is not active. Contact the administrator.",
                 username,
                 status: 403,
-            });
+            }, explicitUid);
             return;
         }
 
@@ -338,12 +402,6 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
                     ts: Math.floor(Date.now() / 1000),
                 },
                 consent: grantId ? { grantId } : {},
-                meta: {
-                    wildduck: {
-                        email: account.email,
-                        customer_id: account.internalData?.cid,
-                    },
-                },
             },
             { mergeWithLastSubmission: false },
         );

@@ -22,6 +22,7 @@ db/
 build/
 dist/
 
+
 # Debugging
 .vscode/
 .idea/
@@ -47,4 +48,3 @@ web_modules/
 coverage/
 tmp/
 temp/
-

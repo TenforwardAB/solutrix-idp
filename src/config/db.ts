@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import { WildduckNodeSDK } from "wildduck-nodesdk";
 import * as process from "node:process";
 
-import initModels from "../models/init-models.js";
+import { initModels } from "../models/init-models.js";
 
 dotenv.config();
 
@@ -23,7 +23,7 @@ export const sequelize = new Sequelize(process.env.DATABASE_URL as string, {
         timestamps: true,
     },
 });
-const models = initModels(sequelize);
+const models = initModels(sequelize) as Record<string, any>;
 export const testDatabaseConnection = async (): Promise<void> => {
     try {
         await sequelize.authenticate();

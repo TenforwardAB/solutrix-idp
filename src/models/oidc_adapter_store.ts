@@ -1,101 +1,121 @@
-import {
-    DataTypes,
-    type Model,
-    type ModelAttributes,
-    type ModelStatic,
-    type Optional,
-    type Sequelize,
-} from "sequelize";
+// @ts-nocheck
+import * as Sequelize from 'sequelize';
+import { DataTypes, Model, Optional } from 'sequelize';
 
-interface OidcAdapterAttributes {
-    id: string;
-    name: string;
-    payload: Record<string, unknown>;
-    grantId?: string | null;
-    userCode?: string | null;
-    uid?: string | null;
-    expiresAt?: Date | null;
-    consumedAt?: Date | null;
-    createdAt?: Date;
-    updatedAt?: Date;
+export interface oidc_adapter_storeAttributes {
+  id: string;
+  name: string;
+  payload: object;
+  grantId?: string;
+  userCode?: string;
+  uid?: string;
+  expiresAt?: Date;
+  consumedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-type CreationAttributes = Optional<
-    OidcAdapterAttributes,
-    "grantId" | "userCode" | "uid" | "expiresAt" | "consumedAt" | "createdAt" | "updatedAt"
->;
+export type oidc_adapter_storePk = "id";
+export type oidc_adapter_storeId = oidc_adapter_store[oidc_adapter_storePk];
+export type oidc_adapter_storeOptionalAttributes = "grantId" | "userCode" | "uid" | "expiresAt" | "consumedAt" | "createdAt" | "updatedAt";
+export type oidc_adapter_storeCreationAttributes = Optional<oidc_adapter_storeAttributes, oidc_adapter_storeOptionalAttributes>;
 
-type OidcAdapterModel = Model<OidcAdapterAttributes, CreationAttributes>;
+export class oidc_adapter_store extends Model<oidc_adapter_storeAttributes, oidc_adapter_storeCreationAttributes> implements oidc_adapter_storeAttributes {
+  id!: string;
+  name!: string;
+  payload!: object;
+  grantId?: string;
+  userCode?: string;
+  uid?: string;
+  expiresAt?: Date;
+  consumedAt?: Date;
+  createdAt!: Date;
+  updatedAt!: Date;
 
-const attributes: ModelAttributes<OidcAdapterModel, OidcAdapterAttributes> = {
+
+  static initModel(sequelize: Sequelize.Sequelize): typeof oidc_adapter_store {
+    return oidc_adapter_store.init({
     id: {
-        type: DataTypes.STRING(128),
-        primaryKey: true,
-        allowNull: false,
+      type: DataTypes.STRING(128),
+      allowNull: false,
+      primaryKey: true
     },
     name: {
-        type: DataTypes.STRING(64),
-        allowNull: false,
+      type: DataTypes.STRING(64),
+      allowNull: false
     },
     payload: {
-        type: DataTypes.JSONB,
-        allowNull: false,
+      type: DataTypes.JSONB,
+      allowNull: false
     },
     grantId: {
-        type: DataTypes.STRING(128),
-        allowNull: true,
+      type: DataTypes.STRING(128),
+      allowNull: true
     },
     userCode: {
-        type: DataTypes.STRING(128),
-        allowNull: true,
-        unique: true,
+      type: DataTypes.STRING(128),
+      allowNull: true,
+      unique: "oidc_adapter_store_userCode_key"
     },
     uid: {
-        type: DataTypes.STRING(128),
-        allowNull: true,
-        unique: true,
+      type: DataTypes.STRING(128),
+      allowNull: true,
+      unique: "oidc_adapter_store_uid_key"
     },
     expiresAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
+      type: DataTypes.DATE,
+      allowNull: true
     },
     consumedAt: {
-        type: DataTypes.DATE,
-        allowNull: true,
-    },
-};
-
-const defineOidcAdapterStore = (sequelize: Sequelize): ModelStatic<OidcAdapterModel> => {
-    return sequelize.define<OidcAdapterModel>("oidc_adapter_store", attributes, {
-        tableName: "oidc_adapter_store",
-        schema: "public",
-        timestamps: true,
-        indexes: [
-            {
-                name: "oidc_adapter_store_name_idx",
-                fields: ["name"],
-            },
-            {
-                name: "oidc_adapter_store_grantId_idx",
-                fields: ["grantId"],
-            },
-            {
-                name: "oidc_adapter_store_userCode_idx",
-                unique: true,
-                fields: ["userCode"],
-            },
-            {
-                name: "oidc_adapter_store_uid_idx",
-                unique: true,
-                fields: ["uid"],
-            },
-            {
-                name: "oidc_adapter_store_expiresAt_idx",
-                fields: ["expiresAt"],
-            },
-        ],
-    });
-};
-
-export type { OidcAdapterModel };
-export default defineOidcAdapterStore;
+      type: DataTypes.DATE,
+      allowNull: true
+    }
+  }, {
+    sequelize,
+    tableName: 'oidc_adapter_store',
+    schema: 'public',
+    timestamps: true,
+    indexes: [
+      {
+        name: "oidc_adapter_store_expiresAt_idx",
+        fields: [
+          { name: "expiresAt" },
+        ]
+      },
+      {
+        name: "oidc_adapter_store_grantId_idx",
+        fields: [
+          { name: "grantId" },
+        ]
+      },
+      {
+        name: "oidc_adapter_store_name_idx",
+        fields: [
+          { name: "name" },
+        ]
+      },
+      {
+        name: "oidc_adapter_store_pkey",
+        unique: true,
+        fields: [
+          { name: "id" },
+        ]
+      },
+      {
+        name: "oidc_adapter_store_uid_key",
+        unique: true,
+        fields: [
+          { name: "uid" },
+        ]
+      },
+      {
+        name: "oidc_adapter_store_userCode_key",
+        unique: true,
+        fields: [
+          { name: "userCode" },
+        ]
+      },
+    ]
+  });
+  }
+}

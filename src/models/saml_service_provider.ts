@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { DataTypes, type Model, type ModelAttributes, type Optional, type Sequelize } from "sequelize";
 
 export interface SamlServiceProviderAttributes {
