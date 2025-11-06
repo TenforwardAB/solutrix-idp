@@ -1,0 +1,416 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>Solutrix IDP</title><meta name="description" content="Documentation for Solutrix IDP"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="index.html" class="title">Solutrix IDP</a><div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><h1>Solutrix IDP</h1></div><div class="tsd-panel tsd-typography"><h1 id="solutrix-identity-provider" class="tsd-anchor-link">Solutrix Identity Provider<a href="#solutrix-identity-provider" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1><p>Solutrix IDP is a TypeScript/Node.js implementation of an <strong>OpenID Connect (OIDC) 1.0</strong> and <strong>OAuth 2.0</strong> provider. It is designed to sit in front of the Solutrix WildDuck mail platform and issue standards-based tokens for first- and third-party applications. The service is built on top of <a href="https://github.com/panva/node-oidc-provider"><code>oidc-provider</code></a>, Express, and Sequelize (PostgreSQL), and exposes a RESTful admin API for managing OIDC clients, SAML service providers, and authorization policies.</p>
+<p>The project is tuned for local development: it supports PKCE, automatically looks up WildDuck accounts for claims, and ships with migration scripts, type-safe models, and container manifests.</p>
+<hr>
+<h2 id="contents" class="tsd-anchor-link">Contents<a href="#contents" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ol>
+<li><a href="#architecture-overview">Architecture Overview</a></li>
+<li><a href="#key-features">Key Features</a></li>
+<li><a href="#supported-grants-scopes--claims">Supported Grants, Scopes &amp; Claims</a></li>
+<li><a href="#environment--configuration">Environment &amp; Configuration</a></li>
+<li><a href="#running-locally">Running Locally</a></li>
+<li><a href="#admin-api-quick-reference">Admin API Quick Reference</a></li>
+<li><a href="#authorization-flow-walkthrough">Authorization Flow Walkthrough</a></li>
+<li><a href="#integrating-from-a-typescript-or-svelte-app">Integrating from a TypeScript or Svelte App</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+<li><a href="#further-reading">Further Reading</a></li>
+</ol>
+<hr>
+<h2 id="architecture-overview" class="tsd-anchor-link">Architecture Overview<a href="#architecture-overview" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><pre><code class="text">┌─────────────┐      ┌───────────────┐     ┌─────────────────────┐
+│  Front-end  │─────▶│  Solutrix IDP │────▶│ WildDuck User Store │
+│  (SPA/app)  │◀────┘│  (this repo)  │◀──┐ │  (REST via SDK)     │
+└─────────────┘      ├───────────────┤   │ └─────────────────────┘
+                     │ oidc-provider │   │
+                     │ Express API   │   │ ┌──────────────────────┐
+                     │ Sequelize DB  │   └▶│ PostgreSQL (oidc_* ) │
+                     └───────────────┘     └──────────────────────┘
+</code><button type="button">Copy</button></pre>
+
+<ul>
+<li><strong>oidc-provider</strong>: Handles the OIDC/OAuth protocol, token issuance, and session storage.</li>
+<li><strong>Express</strong>: Hosts admin APIs (<code>/api/global/admin/*</code>) and interaction routes (<code>/interaction/:uid</code>).</li>
+<li><strong>Sequelize</strong>: Persists signing keys, clients, interaction state, and policies.</li>
+<li><strong>WildDuck SDK</strong>: Looks up users and augments tokens with account metadata.</li>
+</ul>
+<p>Interaction data, authorization codes, refresh tokens, etc., are stored in the <code>oidc_adapter_store</code> table (opaque JSON payloads). Admin CRUD endpoints manage records in corresponding tables via Sequelize models.</p>
+<hr>
+<h2 id="key-features" class="tsd-anchor-link">Key Features<a href="#key-features" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li><strong>OpenID Connect Core</strong>: Authorization Code flow with PKCE, UserInfo endpoint, standard discovery.</li>
+<li><strong>OAuth 2.0 Grants</strong>: <code>authorization_code</code>, <code>refresh_token</code>, <code>client_credentials</code>, and Token Exchange (<code>urn:ietf:params:oauth:grant-type:token-exchange</code>).</li>
+<li><strong>WildDuck integration</strong>: Authenticates users via WildDuck APIs and enriches ID/access tokens with customer metadata.</li>
+<li><strong>Admin APIs</strong>: Manage OIDC clients, SAML service providers, and identity policies.</li>
+<li><strong>PKCE-by-default</strong>: All client flows require S256 code challenges.</li>
+<li><strong>Token Exchange logging</strong>: Each token exchange is recorded in <code>token_exchange_events</code>.</li>
+<li><strong>Hot reload</strong>: Development script (<code>npm run dev</code>) uses <code>tsx watch</code> for fast iteration.</li>
+<li><strong>Container ready</strong>: Dockerfile/Podman compose bundle migrations, model generation, and start-up.</li>
+</ul>
+<hr>
+<h2 id="supported-grants-scopes-claims" class="tsd-anchor-link">Supported Grants, Scopes &amp; Claims<a href="#supported-grants-scopes-claims" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="grant-types" class="tsd-anchor-link">Grant Types<a href="#grant-types" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><table>
+<thead>
+<tr>
+<th>Grant type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>authorization_code</code></td>
+<td>Interactive login flow (requires PKCE).</td>
+</tr>
+<tr>
+<td><code>refresh_token</code></td>
+<td>Used to mint new access/ID tokens. TTL configured for 30 days.</td>
+</tr>
+<tr>
+<td><code>client_credentials</code></td>
+<td>Machine-to-machine tokens (no user context).</td>
+</tr>
+<tr>
+<td><code>urn:ietf:params:oauth:grant-type:token-exchange</code></td>
+<td>Exchanges an existing access token for another audience/resource.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="standard-scopes" class="tsd-anchor-link">Standard Scopes<a href="#standard-scopes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Claims included</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openid</code></td>
+<td>Always required; includes <code>sub</code>.</td>
+</tr>
+<tr>
+<td><code>profile</code></td>
+<td>Name-based claims: <code>name</code>, <code>preferred_username</code>, <code>given_name</code>, <code>family_name</code>.</td>
+</tr>
+<tr>
+<td><code>email</code></td>
+<td>Email information: <code>email</code>, <code>email_verified</code>.</td>
+</tr>
+<tr>
+<td><code>offline_access</code></td>
+<td>Allows issuance of refresh tokens during the authorization grant.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="custom-claims-in-accessid-tokens" class="tsd-anchor-link">Custom Claims in Access/ID Tokens<a href="#custom-claims-in-accessid-tokens" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Source</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>customer_id</code></td>
+<td><code>account.internalData.cid</code></td>
+<td>Used by Solutrix services to correlate WildDuck customers.</td>
+</tr>
+<tr>
+<td><code>roles</code>, <code>permissions</code>, <code>branding</code></td>
+<td>WildDuck metadata</td>
+<td>Included when Tekton policies or downstream services require extended claims.</td>
+</tr>
+</tbody>
+</table>
+<p>The provider fetches the user via WildDuck to populate these claims. If a user is suspended/disabled, login is blocked with a human-readable message.</p>
+<hr>
+<h2 id="environment-configuration" class="tsd-anchor-link">Environment &amp; Configuration<a href="#environment-configuration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>Most settings live in <code>.env</code>. Key variables:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DATABASE_URL</code></td>
+<td>PostgreSQL DSN (e.g., <code>postgresql://user:pass@host:5432/db</code>).</td>
+</tr>
+<tr>
+<td><code>NODE_ENV</code></td>
+<td><code>development</code> (enables HTTP cookies) or <code>production</code>.</td>
+</tr>
+<tr>
+<td><code>PORT</code>/<code>HOST</code></td>
+<td>Express listener (default <code>8080</code> on all interfaces).</td>
+</tr>
+<tr>
+<td><code>OIDC_COOKIE_KEYS</code></td>
+<td>Comma-separated HMAC secrets for signing cookies. Required for multi-instance deployments.</td>
+</tr>
+<tr>
+<td><code>OIDC_DEFAULT_*</code></td>
+<td>Optional fallback client if DB is empty (ID, secret, redirect URIs).</td>
+</tr>
+<tr>
+<td><code>WD_API_URL</code> / <code>WD_API_KEY</code></td>
+<td>WildDuck SDK endpoint and key.</td>
+</tr>
+<tr>
+<td><code>ACCESS_TOKEN_EXPIRY_MINUTES</code></td>
+<td>Used when seeding metadata for WildDuck login tracking.</td>
+</tr>
+</tbody>
+</table>
+<p>Sequelize migrations are configured via <code>src/config/config.cjs</code>. The provider dynamically loads active signing keys from <code>jwt_rsa256_keys</code>.</p>
+<hr>
+<h2 id="running-locally" class="tsd-anchor-link">Running Locally<a href="#running-locally" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ol>
+<li>
+<p><strong>Install dependencies</strong></p>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span>
+</code><button type="button">Copy</button></pre>
+
+</li>
+<li>
+<p><strong>Run migrations &amp; model generation</strong> (only required the first time or when schemas change):</p>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">migrate</span><br/><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">gen:models</span>
+</code><button type="button">Copy</button></pre>
+
+</li>
+<li>
+<p><strong>Start the dev server</strong></p>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">dev</span>
+</code><button type="button">Copy</button></pre>
+
+<p>This launches <code>tsx watch src/server.ts</code>, seeds the OIDC provider, and listens on <code>http://localhost:8080</code>.</p>
+</li>
+<li>
+<p><strong>Admin API usage</strong> (example: create a client)</p>
+<pre><code class="bash"><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-3">-sS</span><span class="hl-1"> </span><span class="hl-3">-X</span><span class="hl-1"> </span><span class="hl-2">POST</span><span class="hl-1"> </span><span class="hl-2">http://localhost:8080/api/global/admin/clients</span><span class="hl-1"> </span><span class="hl-4">\</span><br/><span class="hl-1">  </span><span class="hl-3">-H</span><span class="hl-1"> </span><span class="hl-2">&#39;Content-Type: application/json&#39;</span><span class="hl-1"> </span><span class="hl-4">\</span><br/><span class="hl-1">  </span><span class="hl-3">-d</span><span class="hl-1"> </span><span class="hl-2">&#39;{</span><br/><span class="hl-2">    &quot;name&quot;: &quot;example-app&quot;,</span><br/><span class="hl-2">    &quot;redirect_uris&quot;: [&quot;http://localhost:3000/callback&quot;],</span><br/><span class="hl-2">    &quot;grant_types&quot;: [&quot;authorization_code&quot;,&quot;refresh_token&quot;],</span><br/><span class="hl-2">    &quot;scopes&quot;: [&quot;openid&quot;,&quot;profile&quot;,&quot;email&quot;,&quot;offline_access&quot;]</span><br/><span class="hl-2">  }&#39;</span>
+</code><button type="button">Copy</button></pre>
+
+</li>
+<li>
+<p><strong>Authorize</strong> (PKCE example)</p>
+<pre><code class="bash"><span class="hl-5">CLIENT_ID</span><span class="hl-1">=</span><span class="hl-2">&quot;...&quot;</span><br/><span class="hl-5">REDIRECT_URI</span><span class="hl-1">=</span><span class="hl-2">&quot;http://localhost:3000/callback&quot;</span><br/><span class="hl-5">CODE_VERIFIER</span><span class="hl-1">=$(</span><span class="hl-0">openssl</span><span class="hl-1"> </span><span class="hl-2">rand</span><span class="hl-1"> </span><span class="hl-3">-base64</span><span class="hl-1"> </span><span class="hl-6">48</span><span class="hl-1"> | </span><span class="hl-0">tr</span><span class="hl-1"> </span><span class="hl-3">-d</span><span class="hl-1"> </span><span class="hl-2">&#39;=+/&#39;</span><span class="hl-1">)</span><br/><span class="hl-5">CODE_CHALLENGE</span><span class="hl-1">=$(</span><span class="hl-0">printf</span><span class="hl-1"> </span><span class="hl-2">&#39;%s&#39;</span><span class="hl-1"> </span><span class="hl-2">&quot;</span><span class="hl-5">$CODE_VERIFIER</span><span class="hl-2">&quot;</span><span class="hl-1"> | </span><span class="hl-0">openssl</span><span class="hl-1"> </span><span class="hl-2">dgst</span><span class="hl-1"> </span><span class="hl-3">-binary</span><span class="hl-1"> </span><span class="hl-3">-sha256</span><span class="hl-1"> | </span><span class="hl-0">openssl</span><span class="hl-1"> </span><span class="hl-2">base64</span><span class="hl-1"> | </span><span class="hl-0">tr</span><span class="hl-1"> </span><span class="hl-2">&#39;+/&#39;</span><span class="hl-1"> </span><span class="hl-2">&#39;-_&#39;</span><span class="hl-1"> | </span><span class="hl-0">tr</span><span class="hl-1"> </span><span class="hl-3">-d</span><span class="hl-1"> </span><span class="hl-2">&#39;=&#39;</span><span class="hl-1">)</span><br/><span class="hl-5">STATE</span><span class="hl-1">=$(</span><span class="hl-0">openssl</span><span class="hl-1"> </span><span class="hl-2">rand</span><span class="hl-1"> </span><span class="hl-3">-hex</span><span class="hl-1"> </span><span class="hl-6">12</span><span class="hl-1">)</span><br/><br/><span class="hl-5">AUTHORIZE_URL</span><span class="hl-1">=</span><span class="hl-2">&quot;http://localhost:8080/oauth/authorize?client_id=</span><span class="hl-5">$CLIENT_ID</span><span class="hl-2">&amp;redirect_uri=$(</span><span class="hl-0">printf</span><span class="hl-2"> %s &quot;</span><span class="hl-5">$REDIRECT_URI</span><span class="hl-2">&quot; </span><span class="hl-1">|</span><span class="hl-2"> </span><span class="hl-0">jq</span><span class="hl-2"> </span><span class="hl-3">-s</span><span class="hl-2"> </span><span class="hl-3">-R</span><span class="hl-2"> </span><span class="hl-3">-r</span><span class="hl-2"> @uri)&amp;response_type=code&amp;scope=openid%20profile%20email%20offline_access&amp;code_challenge=</span><span class="hl-5">$CODE_CHALLENGE</span><span class="hl-2">&amp;code_challenge_method=S256&amp;state=</span><span class="hl-5">$STATE</span><span class="hl-2">&quot;</span><br/><span class="hl-0">open</span><span class="hl-1"> </span><span class="hl-2">&quot;</span><span class="hl-5">$AUTHORIZE_URL</span><span class="hl-2">&quot;</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Complete the login form at <code>http://localhost:8080/interaction/:uid</code>.</p>
+</li>
+<li>
+<p><strong>Exchange code for tokens</strong></p>
+<pre><code class="bash"><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-3">-sS</span><span class="hl-1"> </span><span class="hl-3">-u</span><span class="hl-1"> </span><span class="hl-2">&quot;</span><span class="hl-5">$CLIENT_ID</span><span class="hl-2">:</span><span class="hl-5">$CLIENT_SECRET</span><span class="hl-2">&quot;</span><span class="hl-1"> </span><span class="hl-4">\</span><br/><span class="hl-1">  </span><span class="hl-3">-H</span><span class="hl-1"> </span><span class="hl-2">&#39;Content-Type: application/x-www-form-urlencoded&#39;</span><span class="hl-1"> </span><span class="hl-4">\</span><br/><span class="hl-1">  </span><span class="hl-3">-d</span><span class="hl-1"> </span><span class="hl-2">&quot;grant_type=authorization_code&amp;code=</span><span class="hl-5">$CODE</span><span class="hl-2">&amp;redirect_uri=$(</span><span class="hl-0">printf</span><span class="hl-2"> %s &quot;</span><span class="hl-5">$REDIRECT_URI</span><span class="hl-2">&quot; </span><span class="hl-1">|</span><span class="hl-2"> </span><span class="hl-0">jq</span><span class="hl-2"> </span><span class="hl-3">-s</span><span class="hl-2"> </span><span class="hl-3">-R</span><span class="hl-2"> </span><span class="hl-3">-r</span><span class="hl-2"> @uri)&amp;code_verifier=</span><span class="hl-5">$CODE_VERIFIER</span><span class="hl-2">&quot;</span><span class="hl-1"> </span><span class="hl-4">\</span><br/><span class="hl-1">  </span><span class="hl-2">http://localhost:8080/oauth/token</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Expect <code>access_token</code>, <code>id_token</code>, and, if <code>offline_access</code> was granted, <code>refresh_token</code>.</p>
+</li>
+</ol>
+<hr>
+<h2 id="admin-api-quick-reference" class="tsd-anchor-link">Admin API Quick Reference<a href="#admin-api-quick-reference" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><table>
+<thead>
+<tr>
+<th>Method &amp; Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/global/admin/clients</code></td>
+<td>List OIDC clients (secrets omitted).</td>
+</tr>
+<tr>
+<td><code>POST /api/global/admin/clients</code></td>
+<td>Create a client (returns generated <code>client_secret</code>).</td>
+</tr>
+<tr>
+<td><code>PATCH /api/global/admin/clients/:id</code></td>
+<td>Update redirect URIs, grants, scopes, rotate secret.</td>
+</tr>
+<tr>
+<td><code>DELETE /api/global/admin/clients/:id</code></td>
+<td>Delete a client and remove it from provider cache.</td>
+</tr>
+<tr>
+<td><code>GET /api/global/admin/policies</code></td>
+<td>List identity policies.</td>
+</tr>
+<tr>
+<td><code>POST /api/global/admin/policies</code></td>
+<td>Create a policy (targets service/client).</td>
+</tr>
+<tr>
+<td><code>GET /api/global/admin/policies/:id</code></td>
+<td>Fetch single policy.</td>
+</tr>
+<tr>
+<td><code>PATCH /api/global/admin/policies/:id</code></td>
+<td>Update a policy JSON blob.</td>
+</tr>
+<tr>
+<td><code>DELETE /api/global/admin/policies/:id</code></td>
+<td>Remove policy.</td>
+</tr>
+<tr>
+<td><code>GET /api/global/admin/saml-service-providers</code></td>
+<td>Manage SAML SP metadata (entityID, ACS endpoints, etc.).</td>
+</tr>
+<tr>
+<td><code>POST /api/global/admin/signing-keys/rotate</code></td>
+<td>Rotate RSA signing keys (stores in <code>jwt_rsa256_keys</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>The admin controller translates request payloads into Sequelize records and keeps the in-memory provider cache in sync (see <code>src/controllers/adminController.ts</code>).</p>
+<h3 id="working-with-identity-policies" class="tsd-anchor-link">Working with Identity Policies<a href="#working-with-identity-policies" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>Policies live in the <code>identity_policies</code> table and let you define fine-grained access rules that the IDP and downstream token exchange logic can consult. Each policy record contains:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>Human readable identifier (e.g., <code>customer.read-only</code>).</td>
+</tr>
+<tr>
+<td><code>targetType</code></td>
+<td>What the policy applies to (e.g., <code>client</code>, <code>service</code>, <code>resource</code>, <code>user</code>).</td>
+</tr>
+<tr>
+<td><code>targetId</code></td>
+<td>Optional target identifier (client ID, service name, etc.).</td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>JSON blob describing the rule (scopes allowed, audiences, claim requirements, etc.).</td>
+</tr>
+</tbody>
+</table>
+<p>Example create call:</p>
+<pre><code class="bash"><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-3">-sS</span><span class="hl-1"> </span><span class="hl-3">-X</span><span class="hl-1"> </span><span class="hl-2">POST</span><span class="hl-1"> </span><span class="hl-2">&quot;</span><span class="hl-5">$IDP_BASE</span><span class="hl-2">/api/global/admin/policies&quot;</span><span class="hl-1"> </span><span class="hl-4">\</span><br/><span class="hl-1">  </span><span class="hl-3">-H</span><span class="hl-1"> </span><span class="hl-2">&#39;Content-Type: application/json&#39;</span><span class="hl-1"> </span><span class="hl-4">\</span><br/><span class="hl-1">  </span><span class="hl-3">-d</span><span class="hl-1"> </span><span class="hl-2">&#39;{</span><br/><span class="hl-2">        &quot;name&quot;: &quot;webmail-readonly&quot;,</span><br/><span class="hl-2">        &quot;target_type&quot;: &quot;service&quot;,</span><br/><span class="hl-2">        &quot;target_id&quot;: &quot;webmail&quot;,</span><br/><span class="hl-2">        &quot;policy&quot;: {</span><br/><span class="hl-2">          &quot;scopes&quot;: [&quot;openid&quot;, &quot;profile&quot;, &quot;email&quot;],</span><br/><span class="hl-2">          &quot;allowed_audiences&quot;: [&quot;webmail&quot;],</span><br/><span class="hl-2">          &quot;expires_in_minutes&quot;: 30</span><br/><span class="hl-2">        }</span><br/><span class="hl-2">      }&#39;</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Policies are consumed primarily by the token-exchange flow (<code>src/oidc/tokenExchange.ts</code>) and any custom logic you add inside Solutrix-API. The example above could be enforced by:</p>
+<ul>
+<li>Checking that exchanges for service <code>webmail</code> only issue the three listed scopes.</li>
+<li>Rejecting tokens for audiences not present in <code>allowed_audiences</code>.</li>
+<li>Limiting TTL by inspecting <code>expires_in_minutes</code>.</li>
+</ul>
+<p>You can fetch active policies with <code>GET /api/global/admin/policies</code>, update the JSON via <code>PATCH</code>, or delete when no longer required. Inside your services, load the relevant policy and adapt behaviour—for instance, to gate customer directory access:</p>
+<pre><code class="ts"><span class="hl-3">const</span><span class="hl-1"> </span><span class="hl-7">policy</span><span class="hl-1"> = </span><span class="hl-8">await</span><span class="hl-1"> </span><span class="hl-0">fetchPolicy</span><span class="hl-1">(</span><span class="hl-2">&#39;service&#39;</span><span class="hl-1">, </span><span class="hl-2">&#39;customer_directory&#39;</span><span class="hl-1">);</span><br/><span class="hl-8">if</span><span class="hl-1"> (!</span><span class="hl-5">policy</span><span class="hl-1">.</span><span class="hl-5">policy</span><span class="hl-1">.</span><span class="hl-5">scopes</span><span class="hl-1">.</span><span class="hl-0">includes</span><span class="hl-1">(</span><span class="hl-2">&#39;customer.read&#39;</span><span class="hl-1">)) {</span><br/><span class="hl-1">  </span><span class="hl-8">throw</span><span class="hl-1"> </span><span class="hl-3">new</span><span class="hl-1"> </span><span class="hl-0">ForbiddenError</span><span class="hl-1">(</span><span class="hl-2">&#39;Missing customer.read scope&#39;</span><span class="hl-1">);</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Policies provide a convenient place to centralise rules without hardcoding scopes or claims across multiple services. Extend the schema as needed (e.g., add <code>allowed_roles</code>, <code>subject_constraints</code>, etc.) to fit Solutrix’s multi-tenant requirements.</p>
+<hr>
+<h2 id="authorization-flow-walkthrough" class="tsd-anchor-link">Authorization Flow Walkthrough<a href="#authorization-flow-walkthrough" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ol>
+<li><strong>Client registration</strong> – add redirect URIs, scopes, grant types via admin API.</li>
+<li><strong>User authorization</strong> – SPA or back-end redirects to <code>/oauth/authorize</code> with PKCE parameters.</li>
+<li><strong>Interaction session</strong> – user lands on <code>/interaction/:uid</code>, enters credentials, WildDuck is queried.</li>
+<li><strong>Grant creation</strong> – provider creates/stores grant objects in <code>oidc_adapter_store</code>.</li>
+<li><strong>Token issuance</strong> – code exchanged for access token, ID token, and optional refresh token.</li>
+<li><strong>Token use</strong> – consumer calls <code>/userinfo</code> or protected resources with <code>Authorization: Bearer ...</code>.</li>
+<li><strong>Refresh</strong> – app posts refresh token to <code>/oauth/token</code> (<code>grant_type=refresh_token</code>) for new access/ID tokens.</li>
+<li><strong>Token exchange</strong> (optional) – services exchange tokens for different audience/permissions.</li>
+</ol>
+<p>The provider logs token exchange events and emits warnings when interaction payloads are missing (helpful for debugging cookie/signature issues in development).</p>
+<hr>
+<h2 id="integrating-from-a-typescript-or-svelte-app" class="tsd-anchor-link">Integrating from a TypeScript or Svelte App<a href="#integrating-from-a-typescript-or-svelte-app" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>You can use any OIDC/OAuth client; the example below uses <a href="https://github.com/authts/oidc-client-ts"><code>oidc-client-ts</code></a>, commonly used in Svelte/React/Angular projects.</p>
+<h3 id="install-dependencies" class="tsd-anchor-link">Install dependencies<a href="#install-dependencies" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">oidc-client-ts</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="client-configuration" class="tsd-anchor-link">Client configuration<a href="#client-configuration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="ts"><span class="hl-9">// src/lib/oidcClient.ts</span><br/><span class="hl-8">import</span><span class="hl-1"> { </span><span class="hl-5">UserManager</span><span class="hl-1">, </span><span class="hl-5">WebStorageStateStore</span><span class="hl-1"> } </span><span class="hl-8">from</span><span class="hl-1"> </span><span class="hl-2">&#39;oidc-client-ts&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-3">const</span><span class="hl-1"> </span><span class="hl-7">IDP_BASE</span><span class="hl-1"> = </span><span class="hl-2">&#39;http://localhost:8080&#39;</span><span class="hl-1">;</span><br/><br/><span class="hl-8">export</span><span class="hl-1"> </span><span class="hl-3">const</span><span class="hl-1"> </span><span class="hl-7">oidcClient</span><span class="hl-1"> = </span><span class="hl-3">new</span><span class="hl-1"> </span><span class="hl-0">UserManager</span><span class="hl-1">({</span><br/><span class="hl-1">  </span><span class="hl-5">authority:</span><span class="hl-1"> </span><span class="hl-7">IDP_BASE</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">client_id:</span><span class="hl-1"> </span><span class="hl-2">&#39;a4e4ab9f-fc30-4a56-a56b-59518c808e66&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">client_secret:</span><span class="hl-1"> </span><span class="hl-2">&#39;b5b5b8439853bed26fb3d98064b4e77f1d2d21b3f75a4c823e5071bfecc2c538&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">redirect_uri:</span><span class="hl-1"> </span><span class="hl-2">&#39;http://localhost:3000/callback&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">post_logout_redirect_uri:</span><span class="hl-1"> </span><span class="hl-2">&#39;http://localhost:3000/&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">response_type:</span><span class="hl-1"> </span><span class="hl-2">&#39;code&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">scope:</span><span class="hl-1"> </span><span class="hl-2">&#39;openid profile email offline_access&#39;</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">monitorSession:</span><span class="hl-1"> </span><span class="hl-3">false</span><span class="hl-1">,</span><br/><span class="hl-1">  </span><span class="hl-5">userStore:</span><span class="hl-1"> </span><span class="hl-3">new</span><span class="hl-1"> </span><span class="hl-0">WebStorageStateStore</span><span class="hl-1">({ </span><span class="hl-5">store:</span><span class="hl-1"> </span><span class="hl-5">window</span><span class="hl-1">.</span><span class="hl-5">localStorage</span><span class="hl-1"> }),</span><br/><span class="hl-1">});</span>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="svelte-example-component" class="tsd-anchor-link">Svelte example (component)<a href="#svelte-example-component" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="svelte"><script lang="ts">
+  import { onMount } from 'svelte';
+  import { oidcClient } from './lib/oidcClient';
+  import type { User } from 'oidc-client-ts';
+
+  let user: User | null = null;
+  let error: string | null = null;
+
+  onMount(async () => {
+    try {
+      const existing = await oidcClient.getUser();
+      if (existing && !existing.expired) {
+        user = existing;
+        return;
+      }
+
+      await oidcClient.signinRedirect(); // Browser navigates to IDP
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  });
+</script>
+
+{#if error}
+  <p class="error">{error}</p>
+{:else if user}
+  <h2>Welcome {user.profile?.name}</h2>
+  <button on:click={() => oidcClient.signoutRedirect()}>Sign out</button>
+{:else}
+  <p>Redirecting to sign in…</p>
+{/if}
+</code><button type="button">Copy</button></pre>
+
+<h3 id="callback-handler-svelte-route-or-standalone-page" class="tsd-anchor-link">Callback handler (Svelte route or standalone page)<a href="#callback-handler-svelte-route-or-standalone-page" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><pre><code class="svelte"><script lang="ts">
+  import { onMount } from 'svelte';
+  import { oidcClient } from './lib/oidcClient';
+
+  onMount(async () => {
+    await oidcClient.signinCallback(); // Exchanges code + PKCE verifier
+    window.location.replace('/');      // Redirect back into the app
+  });
+</script>
+
+<p>Completing sign-in…</p>
+</code><button type="button">Copy</button></pre>
+
+<h3 id="refresh-tokens-silent-renewal" class="tsd-anchor-link">Refresh tokens &amp; silent renewal<a href="#refresh-tokens-silent-renewal" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><ul>
+<li><code>oidc-client-ts</code> automatically handles refresh token exchange if <code>offline_access</code> is granted and the token endpoint permits refresh. Use <code>signinSilent</code> if you configure an iframe-based silent callback, or rely on refresh tokens with background calls in your store/service layer.</li>
+<li>Check <code>userManager.events.addAccessTokenExpired(...)</code> to hook into expiration events and call <code>signinSilent</code> or <code>signinRedirect</code>.</li>
+</ul>
+<h3 id="token-exchange-optional-advanced-use" class="tsd-anchor-link">Token Exchange (optional advanced use)<a href="#token-exchange-optional-advanced-use" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>If your SPA needs to exchange tokens for other audiences (e.g., APIs with different scopes), call <code>/oauth/token</code> with <code>grant_type=urn:ietf:params:oauth:grant-type:token-exchange</code>. Ensure the client has the grant enabled when registering via admin API.</p>
+<hr>
+<h2 id="troubleshooting" class="tsd-anchor-link">Troubleshooting<a href="#troubleshooting" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely Cause / Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>interaction session not found</code> after login POST</td>
+<td>Browser didn’t send interaction cookie. In dev, verify <code>OIDC_COOKIE_KEYS</code>, ensure the host matches, or add <code>prompt=consent</code>.</td>
+</tr>
+<tr>
+<td><code>Invalid value &quot;undefined&quot; for header &quot;Location&quot;</code></td>
+<td>Interaction payload missing <code>returnTo</code>. Check interaction rows in <code>oidc_adapter_store</code> and ensure payload isn’t empty (fixed by accessing <code>entry.get('payload')</code>).</td>
+</tr>
+<tr>
+<td><code>invalid_client_metadata</code> when creating client</td>
+<td><code>grant_types</code> or <code>redirect_uris</code> include unsupported values. Ensure only standard grants (plus token exchange) are used.</td>
+</tr>
+<tr>
+<td>No refresh token returned</td>
+<td>Either <code>offline_access</code> scope not requested, or existing grant didn’t include it. Use <code>prompt=consent</code>.</td>
+</tr>
+<tr>
+<td>Cookies complaining about HTTPS</td>
+<td>In development <code>NODE_ENV=development</code>, so cookies are flagged non-secure. For production, ensure HTTPS.</td>
+</tr>
+</tbody>
+</table>
+<p>Enable verbose logging by setting <code>LOG_LEVEL=debug</code> and watch the console for <code>[adapter:*]</code> messages.</p>
+<hr>
+<h2 id="further-reading" class="tsd-anchor-link">Further Reading<a href="#further-reading" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li><a href="https://oidc-provider.readthedocs.io/">oidc-provider documentation</a></li>
+<li><a href="https://datatracker.ietf.org/doc/html/rfc8693">OAuth 2.0 Token Exchange RFC 8693</a></li>
+<li><a href="https://openid.net/specs/openid-connect-core-1_0.html">OIDC Core specification</a></li>
+<li><a href="https://wildduck.email/docs/">WildDuck API</a> – to understand how user metadata is retrieved</li>
+<li><a href="https://authts.github.io/oidc-client-ts/"><code>oidc-client-ts</code> guide</a> for SPA integrations</li>
+</ul>
+<hr>
+<h2 id="license" class="tsd-anchor-link">License<a href="#license" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>This repository is private to Solutrix. If you intend to open source, add the appropriate license here.</p>
+<hr>
+<p>Happy authenticating! If you encounter issues or want to extend functionality (custom prompts, additional grant types, etc.), review the controllers under <code>src/controllers</code> and the provider bootstrap in <code>src/oidc/provider.ts</code>. All custom behaviour is centralized there.</p>
+</div></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#solutrix-identity-provider"><span>Solutrix <wbr/>Identity <wbr/>Provider</span></a><ul><li><a href="#contents"><span>Contents</span></a></li><li><a href="#architecture-overview"><span>Architecture <wbr/>Overview</span></a></li><li><a href="#key-features"><span>Key <wbr/>Features</span></a></li><li><a href="#supported-grants-scopes-claims"><span>Supported <wbr/>Grants, <wbr/>Scopes &amp; <wbr/>Claims</span></a></li><li><ul><li><a href="#grant-types"><span>Grant <wbr/>Types</span></a></li><li><a href="#standard-scopes"><span>Standard <wbr/>Scopes</span></a></li><li><a href="#custom-claims-in-accessid-tokens"><span>Custom <wbr/>Claims in <wbr/>Access/<wbr/>ID <wbr/>Tokens</span></a></li></ul></li><li><a href="#environment-configuration"><span>Environment &amp; <wbr/>Configuration</span></a></li><li><a href="#running-locally"><span>Running <wbr/>Locally</span></a></li><li><a href="#admin-api-quick-reference"><span>Admin <wbr/>API <wbr/>Quick <wbr/>Reference</span></a></li><li><ul><li><a href="#working-with-identity-policies"><span>Working with <wbr/>Identity <wbr/>Policies</span></a></li></ul></li><li><a href="#authorization-flow-walkthrough"><span>Authorization <wbr/>Flow <wbr/>Walkthrough</span></a></li><li><a href="#integrating-from-a-typescript-or-svelte-app"><span>Integrating from a <wbr/>Type<wbr/>Script or <wbr/>Svelte <wbr/>App</span></a></li><li><ul><li><a href="#install-dependencies"><span>Install dependencies</span></a></li><li><a href="#client-configuration"><span>Client configuration</span></a></li><li><a href="#svelte-example-component"><span>Svelte example (component)</span></a></li><li><a href="#callback-handler-svelte-route-or-standalone-page"><span>Callback handler (<wbr/>Svelte route or standalone page)</span></a></li><li><a href="#refresh-tokens-silent-renewal"><span>Refresh tokens &amp; silent renewal</span></a></li><li><a href="#token-exchange-optional-advanced-use"><span>Token <wbr/>Exchange (optional advanced use)</span></a></li></ul></li><li><a href="#troubleshooting"><span>Troubleshooting</span></a></li><li><a href="#further-reading"><span>Further <wbr/>Reading</span></a></li><li><a href="#license"><span>License</span></a></li></ul></div></details></div><div class="site-menu"><nav class="tsd-navigation"><a href="modules.html">Solutrix IDP</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div></body></html>
