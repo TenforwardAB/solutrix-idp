@@ -17,9 +17,11 @@ import {
     listPolicies,
     updatePolicy,
 } from "../controllers/adminController.js";
+import { adminApiKeyAuth } from "src/middlewares/admin-api-key.middleware.js";
 
 const router = Router();
 
+router.use(adminApiKeyAuth);
 /**
  * @openapi
  * /api/global/admin/clients:
