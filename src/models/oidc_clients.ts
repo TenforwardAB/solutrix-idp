@@ -12,11 +12,12 @@ export interface oidc_clientsAttributes {
   scopes: object;
   createdAt: Date;
   updatedAt: Date;
+  postLogoutRedirectUris?: object;
 }
 
 export type oidc_clientsPk = "id";
 export type oidc_clientsId = oidc_clients[oidc_clientsPk];
-export type oidc_clientsOptionalAttributes = "id" | "createdAt" | "updatedAt";
+export type oidc_clientsOptionalAttributes = "id" | "createdAt" | "updatedAt" | "postLogoutRedirectUris";
 export type oidc_clientsCreationAttributes = Optional<oidc_clientsAttributes, oidc_clientsOptionalAttributes>;
 
 export class oidc_clients extends Model<oidc_clientsAttributes, oidc_clientsCreationAttributes> implements oidc_clientsAttributes {
@@ -29,6 +30,7 @@ export class oidc_clients extends Model<oidc_clientsAttributes, oidc_clientsCrea
   scopes!: object;
   createdAt!: Date;
   updatedAt!: Date;
+  postLogoutRedirectUris?: object;
 
 
   static initModel(sequelize: Sequelize.Sequelize): typeof oidc_clients {
@@ -63,6 +65,10 @@ export class oidc_clients extends Model<oidc_clientsAttributes, oidc_clientsCrea
     scopes: {
       type: DataTypes.JSONB,
       allowNull: false
+    },
+    postLogoutRedirectUris: {
+      type: DataTypes.JSONB,
+      allowNull: true
     }
   }, {
     sequelize,

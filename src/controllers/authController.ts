@@ -260,6 +260,58 @@ const renderLoginView = async (
 };
 
 /**
+ * Render a minimal consent page listing requested scopes.
+ */
+const renderConsentView = (
+    res: Response,
+    params: { clientName?: string; scope?: string; uid: string; clientId?: string },
+    status = 200,
+): void => {
+    const scopeList = (params.scope || "").split(" ").filter(Boolean);
+    const scopeMarkup = scopeList
+        .map(
+            (s) =>
+                `<span style="display:inline-block;padding:6px 10px;margin:4px;border-radius:10px;background:#e2e8f0;font-weight:600;font-size:13px;color:#0f172a;">${s}</span>`,
+        )
+        .join("") || '<em style="color:#475569;">No scopes requested</em>';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Consent &middot; ${params.clientName || params.clientId || "Client"}</title>
+  <style>
+    body { margin:0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0b1929; display:flex; min-height:100vh; align-items:center; justify-content:center; }
+    main { background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:min(520px, calc(100% - 32px)); color:#f8fafc; box-shadow:0 24px 60px rgba(0,0,0,0.35); }
+    h1 { margin:0 0 6px; font-size:22px; }
+    p { margin:4px 0 10px; color:#cbd5e1; }
+    form { margin-top:14px; display:flex; gap:12px; }
+    button { border:none; border-radius:10px; padding:12px 16px; font-weight:700; cursor:pointer; font-size:14px; }
+    .approve { background: linear-gradient(135deg,#22d3ee,#6366f1); color:#0b1929; box-shadow:0 10px 30px rgba(99,102,241,0.35); }
+    .deny { background:#0f172a; color:#e2e8f0; border:1px solid #1e293b; }
+    .scopes { margin:12px 0 6px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Allow ${params.clientName || params.clientId || "this app"}?</h1>
+    <p>This application is requesting access with the following scopes:</p>
+    <div class="scopes">${scopeMarkup}</div>
+    <form method="post" action="/interaction/${params.uid}/confirm">
+      <button class="approve" type="submit">Allow</button>
+    </form>
+    <form method="post" action="/interaction/${params.uid}/abort">
+      <button class="deny" type="submit">Deny</button>
+    </form>
+  </main>
+</body>
+</html>`;
+
+    res.status(status).type("html").send(html);
+};
+
+/**
  * Ensure the interaction has an authorization grant with appropriate scopes.
  *
  * @param provider - Active OIDC provider.
@@ -328,6 +380,23 @@ export const showInteraction = async (req: Request, res: Response): Promise<void
         const provider = await getProvider();
         const interaction = await provider.interactionDetails(req, res);
         const routeUid = typeof req.params.uid === "string" ? req.params.uid : undefined;
+
+        if (interaction.prompt?.name === "consent") {
+            const clientId = interaction.params?.client_id as string | undefined;
+            const client = clientId ? await provider.Client.find(clientId) : undefined;
+            const scope = typeof interaction.params?.scope === "string" ? interaction.params.scope : undefined;
+            renderConsentView(
+                res,
+                {
+                    clientName: client?.metadata?.client_name,
+                    clientId,
+                    scope,
+                    uid: routeUid ?? interaction.uid,
+                },
+                200,
+            );
+            return;
+        }
 
         if (interaction.prompt?.name && interaction.prompt.name !== "login") {
             const accountId = interaction.session?.accountId;
@@ -437,6 +506,7 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
         }
 
         const account = await fetchWildDuckAccount(userId);
+        console.log("login_wd account", account);
 
         if (!account.activated || account.suspended || account.disabled) {
             await renderLoginView(provider, res, interaction, {
@@ -471,8 +541,6 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
             console.warn("Failed to update WildDuck metadata", metadataError);
         }
 
-        const grantId = await ensureGrant(provider, interaction, account.id);
-
         await provider.interactionFinished(
             req,
             res,
@@ -484,7 +552,6 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
                     remember: true,
                     ts: Math.floor(Date.now() / 1000),
                 },
-                consent: grantId ? { grantId } : {},
             },
             { mergeWithLastSubmission: false },
         );
@@ -517,5 +584,29 @@ export const abortInteraction = async (req: Request, res: Response): Promise<voi
     } catch (error) {
         console.error("abortInteraction error", error);
         res.status(500).json({ error: "interaction_abort_failed" });
+    }
+};
+
+/**
+ * Handle explicit consent approval.
+ */
+export const confirmConsent = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const provider = await getProvider();
+        const interaction = await provider.interactionDetails(req, res);
+        const accountId = interaction.session?.accountId;
+        const grantId = await ensureGrant(provider, interaction, accountId);
+
+        await provider.interactionFinished(
+            req,
+            res,
+            {
+                consent: grantId ? { grantId } : {},
+            },
+            { mergeWithLastSubmission: true },
+        );
+    } catch (error) {
+        console.error("confirmConsent error", error);
+        res.status(500).json({ error: "consent_failed" });
     }
 };

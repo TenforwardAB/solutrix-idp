@@ -21,8 +21,6 @@ services:
     volumes:
       - ./:/app
       - idp-node-modules:/app/node_modules
-    networks:
-      - idp-net
 
   idpdb:
     image: docker.io/library/postgres:16-alpine
@@ -39,13 +37,8 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
-    networks:
-      - idp-net
 
 volumes:
   idpdb-data:
   idp-node-modules:
 
-networks:
-  idp-net:
-    driver: bridge

@@ -8,7 +8,7 @@ ENV NODE_ENV=${NODE_ENV}
 
 COPY package*.json ./
 
-RUN npm install
+RUN npm install --production=false
 RUN if [ "$NODE_ENV" = "development" ]; then npm install --no-save sequelize-auto; fi
 
 RUN apt-get update && apt-get install -y rsync && apt-get clean && rm -rf /var/lib/apt/lists/*

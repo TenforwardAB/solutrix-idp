@@ -63,10 +63,14 @@ const readStaticClients = (): Configuration["clients"] => {
     const clientId = process.env.OIDC_DEFAULT_CLIENT_ID;
     const clientSecret = process.env.OIDC_DEFAULT_CLIENT_SECRET;
     const redirectUris = process.env.OIDC_DEFAULT_REDIRECT_URIS;
+    const postLogoutRedirectUris = process.env.OIDC_DEFAULT_POST_LOGOUT_REDIRECT_URIS;
 
     if (!clientId || !clientSecret || !redirectUris) {
         return [];
     }
+
+    const parsedPostLogoutUris =
+        postLogoutRedirectUris?.split(",").map((uri) => uri.trim()).filter((uri) => uri.length > 0) ?? undefined;
 
     return [
         {
@@ -75,6 +79,7 @@ const readStaticClients = (): Configuration["clients"] => {
             grant_types: ["authorization_code", "refresh_token", "client_credentials", TOKEN_EXCHANGE_GRANT],
             response_types: ["code"],
             redirect_uris: redirectUris.split(",").map((uri) => uri.trim()),
+            post_logout_redirect_uris: parsedPostLogoutUris,
             token_endpoint_auth_method: "client_secret_basic",
         },
     ];
@@ -86,6 +91,7 @@ type DbClientRecord = {
     redirectUris: string[];
     grantTypes: string[];
     scopes: string[];
+    postLogoutRedirectUris?: string[];
 };
 
 /**
@@ -110,6 +116,10 @@ const fetchDbClients = async (): Promise<Configuration["clients"]> => {
             response_types: grantTypes.includes("implicit") ? ["code", "id_token"] : ["code"],
             token_endpoint_auth_method: "client_secret_basic",
             scope: scopes.length > 0 ? scopes.join(" ") : undefined,
+            post_logout_redirect_uris:
+                Array.isArray(data.postLogoutRedirectUris) && data.postLogoutRedirectUris.length > 0
+                    ? data.postLogoutRedirectUris
+                    : undefined,
         } satisfies Configuration["clients"][number];
     });
 

@@ -124,6 +124,9 @@ export const createClient = async (req: Request, res: Response): Promise<void> =
     const redirectUris = toStringArray(req.body.redirect_uris ?? req.body.redirectUris);
     const grantTypes = toStringArray(req.body.grant_types ?? req.body.grantTypes);
     const scopes = toStringArray(req.body.scopes);
+    const postLogoutRedirectUris = toStringArray(
+        req.body.post_logout_redirect_uris ?? req.body.postLogoutRedirectUris,
+    );
 
     if (!name || redirectUris.length === 0 || grantTypes.length === 0) {
         res.status(400).json({ error: "invalid_client_payload" });
@@ -143,6 +146,7 @@ export const createClient = async (req: Request, res: Response): Promise<void> =
                 redirectUris,
                 grantTypes,
                 scopes,
+                postLogoutRedirectUris: postLogoutRedirectUris.length > 0 ? postLogoutRedirectUris : null,
             },
             { transaction },
         );
@@ -154,6 +158,7 @@ export const createClient = async (req: Request, res: Response): Promise<void> =
             grantTypes,
             scopes,
             name,
+            postLogoutRedirectUris,
         });
 
         await transaction.commit();
@@ -166,6 +171,7 @@ export const createClient = async (req: Request, res: Response): Promise<void> =
             redirect_uris: redirectUris,
             grant_types: grantTypes,
             scopes,
+            post_logout_redirect_uris: postLogoutRedirectUris.length > 0 ? postLogoutRedirectUris : undefined,
         });
     } catch (error) {
         await transaction.rollback();
@@ -217,6 +223,11 @@ export const updateClient = async (req: Request, res: Response): Promise<void> =
         if (req.body.scopes) {
             updates.scopes = toStringArray(req.body.scopes);
         }
+        if (req.body.post_logout_redirect_uris || req.body.postLogoutRedirectUris) {
+            updates.postLogoutRedirectUris = toStringArray(
+                req.body.post_logout_redirect_uris ?? req.body.postLogoutRedirectUris,
+            );
+        }
         if (req.body.rotate_secret === true) {
             updates.clientSecret = crypto.randomBytes(32).toString("hex");
         }
@@ -231,6 +242,7 @@ export const updateClient = async (req: Request, res: Response): Promise<void> =
             grantTypes: payload.grantTypes,
             scopes: payload.scopes,
             name: payload.name,
+            postLogoutRedirectUris: payload.postLogoutRedirectUris ?? [],
         });
 
         await transaction.commit();
@@ -242,6 +254,7 @@ export const updateClient = async (req: Request, res: Response): Promise<void> =
             redirect_uris: payload.redirectUris,
             grant_types: payload.grantTypes,
             scopes: payload.scopes,
+            post_logout_redirect_uris: payload.postLogoutRedirectUris,
         };
 
         if (updates.clientSecret) {
@@ -577,6 +590,7 @@ const syncProviderClient = async (client: {
     grantTypes: string[];
     scopes: string[];
     name?: string;
+    postLogoutRedirectUris?: string[];
 }): Promise<void> => {
     const provider = await getProvider();
     const grantTypes = normalizeGrantTypes(client.grantTypes);
@@ -593,6 +607,9 @@ const syncProviderClient = async (client: {
 
     if (client.name) {
         metadata.client_name = client.name;
+    }
+    if (client.postLogoutRedirectUris && client.postLogoutRedirectUris.length > 0) {
+        metadata.post_logout_redirect_uris = client.postLogoutRedirectUris;
     }
 
     const existing = await provider.Client.find(client.clientId);
