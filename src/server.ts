@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import getProvider from "./oidc/provider.js";
 import authRoutes from "./routes/authRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import requireAdminApiKey from "./middleware/requireAdminApiKey.js";
 
 dotenv.config();
 
@@ -924,7 +925,7 @@ const bootstrap = async (): Promise<void> => {
 
     const provider = await getProvider();
 
-    app.use("/api/global/admin", adminRoutes);
+    app.use("/api/global/admin", requireAdminApiKey, adminRoutes);
     app.use("/interaction", authRoutes);
     app.use(provider.callback());
 
