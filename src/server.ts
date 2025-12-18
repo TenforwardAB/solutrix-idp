@@ -9,7 +9,7 @@ import authRoutes from "./routes/authRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import requireAdminApiKey from "./middleware/requireAdminApiKey.js";
 import masterPasswordAuth from "./middleware/masterPasswordAuth.js";
-import { renderAdminGuiPage } from "./views/pages/adminGui.js";
+import { renderAdminGuiPage } from "./views/pages/adminGui.ts";
 import { renderSwaggerDocsPage } from "./views/pages/swaggerDocs.js";
 
 dotenv.config();

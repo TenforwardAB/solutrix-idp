@@ -222,7 +222,7 @@ export const getProvider = async (): Promise<Provider> => {
             required: () => true,
             methods: ["S256"],
         },
-        scopes: ["openid", "profile", "email", "offline_access"],
+        scopes: ["openid", "profile", "email", "account", "offline_access"],
         claims: {
             openid: ["sub"],
             email: ["email", "email_verified"],
