@@ -1,376 +1,376 @@
-# Solutrix Identity Provider
+# Solutrix Identity Provider (IDP)
 
-Solutrix IDP is a TypeScript/Node.js implementation of an **OpenID Connect (OIDC) 1.0** and **OAuth 2.0** provider. It is designed to sit in front of the Solutrix WildDuck mail platform and issue standards-based tokens for first- and third-party applications. The service is built on top of [`oidc-provider`](https://github.com/panva/node-oidc-provider), Express, and Sequelize (PostgreSQL), and exposes a RESTful admin API for managing OIDC clients, SAML service providers, and authorization policies.
+Solutrix IDP is an OpenID Connect (OIDC 1.0) / OAuth 2.0 authorization server built on `oidc-provider`, hosted via Express, and backed by PostgreSQL (Sequelize). It authenticates end-users against WildDuck and issues standards-based tokens to first- and third-party clients.
 
-The project is tuned for local development: it supports PKCE, automatically looks up WildDuck accounts for claims, and ships with migration scripts, type-safe models, and container manifests.
+This README focuses on how the IDP works internally (auth flow, client model, policies/SP registries) and how to operate it as a developer.
 
----
-
-## Contents
-
-1. [Architecture Overview](#architecture-overview)
-2. [Key Features](#key-features)
-3. [Supported Grants, Scopes & Claims](#supported-grants-scopes--claims)
-4. [Environment & Configuration](#environment--configuration)
-5. [Running Locally](#running-locally)
-6. [Admin API Quick Reference](#admin-api-quick-reference)
-7. [Authorization Flow Walkthrough](#authorization-flow-walkthrough)
-8. [Integrating from a TypeScript or Svelte App](#integrating-from-a-typescript-or-svelte-app)
-9. [Troubleshooting](#troubleshooting)
-10. [Further Reading](#further-reading)
-
----
-
-## Architecture Overview
+## High-Level Architecture
 
 ```text
-┌─────────────┐      ┌───────────────┐     ┌─────────────────────┐
-│  Front-end  │─────▶│  Solutrix IDP │────▶│ WildDuck User Store │
-│  (SPA/app)  │◀────┘│  (this repo)  │◀──┐ │  (REST via SDK)     │
-└─────────────┘      ├───────────────┤   │ └─────────────────────┘
-                     │ oidc-provider │   │
-                     │ Express API   │   │ ┌──────────────────────┐
-                     │ Sequelize DB  │   └▶│ PostgreSQL (oidc_* ) │
-                     └───────────────┘     └──────────────────────┘
+┌───────────────────────────┐
+│ Relying Party (web/mobile)│
+└──────────────┬────────────┘
+               │ 1) /oauth/authorize (PKCE)
+               ▼
+┌───────────────────────────┐
+│ Solutrix IDP (Express)     │
+│ - oidc-provider (OIDC)     │
+│ - /interaction/:uid (UI)   │
+│ - /api/global/admin (CRUD) │
+└───────┬───────────┬───────┘
+        │           │
+        │           ├─ PostgreSQL (Sequelize)
+        │           │  - oidc_adapter_store (oidc-provider)
+        │           │  - oidc_clients
+        │           │  - jwt_rsa256_keys
+        │           │  - identity_policies (WIP)
+        │           │  - saml_service_providers (WIP)
+        │           │  - token_exchange_* (internal)
+        │
+        └─ WildDuck API (user auth + profile)
+           - credential verification
+           - account lookup for claims
 ```
 
-- **oidc-provider**: Handles the OIDC/OAuth protocol, token issuance, and session storage.
-- **Express**: Hosts admin APIs (`/api/global/admin/*`) and interaction routes (`/interaction/:uid`).
-- **Sequelize**: Persists signing keys, clients, interaction state, and policies.
-- **WildDuck SDK**: Looks up users and augments tokens with account metadata.
+Key entry points:
+- Express bootstrap: `src/server.ts`
+- OIDC provider configuration: `src/oidc/provider.ts`
+- Interaction (login/consent) controller: `src/controllers/authController.ts`
+- Admin API controller: `src/controllers/adminController.ts`
 
-Interaction data, authorization codes, refresh tokens, etc., are stored in the `oidc_adapter_store` table (opaque JSON payloads). Admin CRUD endpoints manage records in corresponding tables via Sequelize models.
+## OIDC/OAuth Endpoints
 
----
+The provider routes are configured in `src/oidc/provider.ts`:
+- Authorization: `GET /oauth/authorize`
+- Token: `POST /oauth/token`
+- JWKS: `GET /oauth/jwks.json`
+- UserInfo: `GET /userinfo`
+- Introspection: `POST /oauth/introspect`
+- Revocation: `POST /oauth/revoke`
+- End-session: `GET /oauth/logout`
 
-## Key Features
+Standard discovery endpoints (served by `oidc-provider`) are also available under `/.well-known/openid-configuration` (issuer-dependent).
 
-- **OpenID Connect Core**: Authorization Code flow with PKCE, UserInfo endpoint, standard discovery.
-- **OAuth 2.0 Grants**: `authorization_code`, `refresh_token`, `client_credentials`, and Token Exchange (`urn:ietf:params:oauth:grant-type:token-exchange`).
-- **WildDuck integration**: Authenticates users via WildDuck APIs and enriches ID/access tokens with customer metadata.
-- **Admin APIs**: Manage OIDC clients, SAML service providers, and identity policies.
-- **PKCE-by-default**: All client flows require S256 code challenges.
-- **Token Exchange logging**: Each token exchange is recorded in `token_exchange_events`.
-- **Hot reload**: Development script (`npm run dev`) uses `tsx watch` for fast iteration.
-- **Container ready**: Dockerfile/Podman compose bundle migrations, model generation, and start-up.
+## Interaction (Login + Consent) Flow (Authorization Code + PKCE)
 
----
+### 1) Client starts authorization
 
-## Supported Grants, Scopes & Claims
+Your relying party redirects the user to:
 
-### Grant Types
+```
+GET /oauth/authorize
+  ?client_id=...
+  &redirect_uri=...
+  &response_type=code
+  &scope=openid%20profile%20email%20offline_access
+  &code_challenge=...
+  &code_challenge_method=S256
+  &state=...
+```
 
-| Grant type                                         | Description                                                                                         |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `authorization_code`                               | Interactive login flow (requires PKCE).                                                             |
-| `refresh_token`                                    | Used to mint new access/ID tokens. TTL configured for 30 days.                                      |
-| `client_credentials`                               | Machine-to-machine tokens (no user context).                                                        |
-| `urn:ietf:params:oauth:grant-type:token-exchange`  | Exchanges an existing access token for another audience/resource.                                   |
+PKCE is required (`S256`) by configuration.
 
-### Standard Scopes
+### 2) `oidc-provider` redirects into an interaction
 
-| Scope             | Claims included                                                                                                      |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `openid`          | Always required; includes `sub`.                                                                                     |
-| `profile`         | Name-based claims: `name`, `preferred_username`, `given_name`, `family_name`.                                       |
-| `email`           | Email information: `email`, `email_verified`.                                                                        |
-| `offline_access`  | Allows issuance of refresh tokens during the authorization grant.                                                    |
+When user authentication/consent is required, `oidc-provider` creates an interaction and redirects the browser to:
 
-### Custom Claims in Access/ID Tokens
+```
+GET /interaction/:uid
+```
 
-| Claim             | Source                           | Description                                                  |
-| ----------------- | -------------------------------- | ------------------------------------------------------------ |
-| `customer_id`     | `account.internalData.cid`       | Used by Solutrix services to correlate WildDuck customers.   |
-| `roles`, `permissions`, `branding` | WildDuck metadata | Included when Tekton policies or downstream services require extended claims. |
+That route is served by Express (`src/routes/authRoutes.ts`) and implemented in `src/controllers/authController.ts`.
 
-The provider fetches the user via WildDuck to populate these claims. If a user is suspended/disabled, login is blocked with a human-readable message.
+### 3) `GET /interaction/:uid` renders either login or consent
 
----
+`showInteraction` calls `provider.interactionDetails(req, res)` and inspects `interaction.prompt.name`:
 
-## Environment & Configuration
+- `login` → renders the login page.
+- `consent` → renders the consent page (lists requested scopes).
+- any other prompt → attempts to finish the interaction automatically if possible.
 
-Most settings live in `.env`. Key variables:
+The HTML is rendered from view components:
+- Login page: `src/views/interaction/loginPage.ts`
+- Consent page: `src/views/interaction/consentPage.ts`
 
-| Variable                        | Description                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                 | PostgreSQL DSN (e.g., `postgresql://user:pass@host:5432/db`).                              |
-| `NODE_ENV`                     | `development` (enables HTTP cookies) or `production`.                                      |
-| `PORT`/`HOST`                  | Express listener (default `8080` on all interfaces).                                       |
-| `OIDC_COOKIE_KEYS`             | Comma-separated HMAC secrets for signing cookies. Required for multi-instance deployments. |
-| `OIDC_DEFAULT_*`               | Optional fallback client if DB is empty (ID, secret, redirect URIs).                       |
-| `WD_API_URL` / `WD_API_KEY`    | WildDuck SDK endpoint and key.                                                             |
-| `ACCESS_TOKEN_EXPIRY_MINUTES`  | Used when seeding metadata for WildDuck login tracking.                                     |
+### 4) `POST /interaction/:uid/login` authenticates against WildDuck
 
-Sequelize migrations are configured via `src/config/config.cjs`. The provider dynamically loads active signing keys from `jwt_rsa256_keys`.
+`login_wd` expects a form submission with:
+- `username` (email)
+- `password`
+- `uid` (hidden field)
 
----
+Flow:
+1. Ensures the interaction cookie exists (in some dev cases the controller re-seeds it to recover from missing cookies).
+2. Calls WildDuck to validate credentials.
+3. Fetches the WildDuck account profile.
+4. Updates WildDuck metadata (login timestamp, client context, etc.).
+5. Finishes the interaction via `provider.interactionFinished(...)` with:
+   - `accountId` (WildDuck user id)
+   - `acr` / `amr` describing the authentication method
 
-## Running Locally
+### 5) Consent approval/denial
 
-1. **Install dependencies**
+The consent page posts to:
+- Approve: `POST /interaction/:uid/confirm`
+- Deny: `POST /interaction/:uid/abort`
 
-   ```bash
-   npm install
-   ```
+Approving consent creates/updates an `oidc-provider` Grant (adds scopes/claims/resource scopes) and then finishes the interaction.
 
-2. **Run migrations & model generation** (only required the first time or when schemas change):
+### 6) Token exchange (authorization code → tokens)
 
-   ```bash
-   npm run migrate
-   npm run gen:models
-   ```
+After successful interaction, the browser is redirected back to the client `redirect_uri` with `?code=...`.
 
-3. **Start the dev server**
-
-   ```bash
-   npm run dev
-   ```
-
-   This launches `tsx watch src/server.ts`, seeds the OIDC provider, and listens on `http://localhost:8080`.
-
-4. **Admin API usage** (example: create a client)
-
-   ```bash
-   curl -sS -X POST http://localhost:8080/api/global/admin/clients \
-     -H 'Content-Type: application/json' \
-     -d '{
-       "name": "example-app",
-       "redirect_uris": ["http://localhost:3000/callback"],
-       "grant_types": ["authorization_code","refresh_token"],
-       "scopes": ["openid","profile","email","offline_access"]
-     }'
-   ```
-
-5. **Authorize** (PKCE example)
-
-   ```bash
-   CLIENT_ID="..."
-   REDIRECT_URI="http://localhost:3000/callback"
-   CODE_VERIFIER=$(openssl rand -base64 48 | tr -d '=+/')
-   CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -binary -sha256 | openssl base64 | tr '+/' '-_' | tr -d '=')
-   STATE=$(openssl rand -hex 12)
-
-   AUTHORIZE_URL="http://localhost:8080/oauth/authorize?client_id=$CLIENT_ID&redirect_uri=$(printf %s "$REDIRECT_URI" | jq -s -R -r @uri)&response_type=code&scope=openid%20profile%20email%20offline_access&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=$STATE"
-   open "$AUTHORIZE_URL"
-   ```
-
-   Complete the login form at `http://localhost:8080/interaction/:uid`.
-
-6. **Exchange code for tokens**
-
-   ```bash
-   curl -sS -u "$CLIENT_ID:$CLIENT_SECRET" \
-     -H 'Content-Type: application/x-www-form-urlencoded' \
-     -d "grant_type=authorization_code&code=$CODE&redirect_uri=$(printf %s "$REDIRECT_URI" | jq -s -R -r @uri)&code_verifier=$CODE_VERIFIER" \
-     http://localhost:8080/oauth/token
-   ```
-
-   Expect `access_token`, `id_token`, and, if `offline_access` was granted, `refresh_token`.
-
----
-
-## Admin API Quick Reference
-
-| Method & Endpoint                               | Description                                               |
-| ----------------------------------------------- | --------------------------------------------------------- |
-| `GET /api/global/admin/clients`                 | List OIDC clients (secrets omitted).                      |
-| `POST /api/global/admin/clients`                | Create a client (returns generated `client_secret`).      |
-| `PATCH /api/global/admin/clients/:id`           | Update redirect URIs, grants, scopes, rotate secret.      |
-| `DELETE /api/global/admin/clients/:id`          | Delete a client and remove it from provider cache.        |
-| `GET /api/global/admin/policies`                | List identity policies.                                   |
-| `POST /api/global/admin/policies`               | Create a policy (targets service/client).                 |
-| `GET /api/global/admin/policies/:id`            | Fetch single policy.                                      |
-| `PATCH /api/global/admin/policies/:id`          | Update a policy JSON blob.                                |
-| `DELETE /api/global/admin/policies/:id`         | Remove policy.                                            |
-| `GET /api/global/admin/saml-service-providers`  | Manage SAML SP metadata (entityID, ACS endpoints, etc.).  |
-| `POST /api/global/admin/signing-keys/rotate`    | Rotate RSA signing keys (stores in `jwt_rsa256_keys`).    |
-
-The admin controller translates request payloads into Sequelize records and keeps the in-memory provider cache in sync (see `src/controllers/adminController.ts`).
-
-### Working with Identity Policies
-
-Policies live in the `identity_policies` table and let you define fine-grained access rules that the IDP and downstream token exchange logic can consult. Each policy record contains:
-
-| Field        | Description                                                                                   |
-| ------------ | --------------------------------------------------------------------------------------------- |
-| `name`       | Human readable identifier (e.g., `customer.read-only`).                                       |
-| `targetType` | What the policy applies to (e.g., `client`, `service`, `resource`, `user`).                   |
-| `targetId`   | Optional target identifier (client ID, service name, etc.).                                   |
-| `policy`     | JSON blob describing the rule (scopes allowed, audiences, claim requirements, etc.).          |
-
-Example create call:
+The client then calls the token endpoint:
 
 ```bash
-curl -sS -X POST "$IDP_BASE/api/global/admin/policies" \
-  -H 'Content-Type: application/json' \
+curl -u "$CLIENT_ID:$CLIENT_SECRET" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d "grant_type=authorization_code" \
+  -d "code=$CODE" \
+  -d "redirect_uri=$REDIRECT_URI" \
+  -d "code_verifier=$CODE_VERIFIER" \
+  http://localhost:8080/oauth/token
+```
+
+### 7) Claims and user lookup
+
+When issuing ID/access tokens and serving `/userinfo`, `oidc-provider` resolves accounts via `findAccount` (WildDuck lookup). Claims are constructed in `src/services/wildduckUserService.ts` and influenced by provider config in `src/oidc/provider.ts` (scopes/claims mapping).
+
+## Clients (OIDC Relying Parties)
+
+### Where clients live
+
+Clients are primarily stored in Postgres (`oidc_clients` table) and loaded at IDP startup:
+- DB-backed clients: loaded by `fetchDbClients()` in `src/oidc/provider.ts`
+- Static fallback clients (optional): via `OIDC_CLIENTS_JSON` or `OIDC_DEFAULT_*` env vars
+
+### What a client contains
+
+The DB record stores:
+- `clientId` / `clientSecret`
+- `redirectUris[]`
+- `postLogoutRedirectUris[]` (optional)
+- `grantTypes[]` (must match what `oidc-provider` supports)
+- `scopes[]` (stored as an allowlist; exposed to `oidc-provider` via `scope` string)
+
+### How admin updates affect runtime behavior
+
+Admin CRUD operations also synchronize the `oidc-provider` internal client registry (including cache refresh), so changes take effect without restarting the server.
+
+## Identity Policies (WIP)
+
+Identity policies are stored and manageable via the Admin API (`identity_policies` table), but they are not yet a hard enforcement mechanism in the core OIDC login/consent flow.
+
+Current state:
+- CRUD is implemented (`/api/global/admin/policies`).
+- The schema is intentionally flexible (`policy` is a JSON blob).
+- Enforcement is expected to evolve (e.g., token exchange constraints, per-client rules, service gating).
+
+If you need strict enforcement today, you should implement it explicitly in:
+- the token exchange grant implementation (`src/oidc/tokenExchange.ts`), and/or
+- resource servers (APIs) consuming the access token.
+
+## SAML Service Providers (WIP)
+
+The Admin API exposes CRUD for a SAML SP registry (`saml_service_providers` table):
+- entity id
+- ACS endpoints
+- binding
+- optional metadata XML
+- attribute mapping (JSON)
+
+Current state:
+- This is a registry only (no SAML SSO endpoints are implemented in the IDP yet).
+- Treat these endpoints and schema as work-in-progress.
+
+## Signing Keys (JWKS / RS256)
+
+`oidc-provider` signs tokens using RS256 keys stored in the database (`jwt_rsa256_keys`).
+
+Important:
+- The server will fail to start if no active signing key exists.
+- Rotate/generate keys via the Admin API endpoint: `POST /api/global/admin/keys/rotate`.
+
+## Admin API
+
+### Authentication
+
+All admin endpoints under `/api/global/admin/*` are protected by an API key:
+- `ADMIN_API_KEY` (required)
+- `ADMIN_API_KEY_HEADER` (optional, defaults to `x-admin-api-key`)
+
+Example:
+
+```bash
+export IDP_BASE="http://localhost:8080"
+export ADMIN_API_KEY="change-me"
+export ADMIN_API_KEY_HEADER="x-admin-api-key"
+```
+
+Then call:
+
+```bash
+curl -H "$ADMIN_API_KEY_HEADER: $ADMIN_API_KEY" "$IDP_BASE/api/global/admin/clients"
+```
+
+### Common Operations
+
+#### Create client
+
+```bash
+curl -X POST "$IDP_BASE/api/global/admin/clients" \
+  -H "$ADMIN_API_KEY_HEADER: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
-        "name": "webmail-readonly",
-        "target_type": "service",
-        "target_id": "webmail",
-        "policy": {
-          "scopes": ["openid", "profile", "email"],
-          "allowed_audiences": ["webmail"],
-          "expires_in_minutes": 30
-        }
-      }'
+    "name": "example-app",
+    "redirect_uris": ["http://localhost:3000/callback"],
+    "post_logout_redirect_uris": ["http://localhost:3000/"],
+    "grant_types": ["authorization_code","refresh_token"],
+    "scopes": ["openid","profile","email","offline_access"]
+  }'
 ```
 
-Policies are consumed primarily by the token-exchange flow (`src/oidc/tokenExchange.ts`) and any custom logic you add inside Solutrix-API. The example above could be enforced by:
+Notes:
+- Response includes `client_secret` only on create (and on rotate).
+- `GET` and `LIST` omit secrets by design.
 
-- Checking that exchanges for service `webmail` only issue the three listed scopes.
-- Rejecting tokens for audiences not present in `allowed_audiences`.
-- Limiting TTL by inspecting `expires_in_minutes`.
-
-You can fetch active policies with `GET /api/global/admin/policies`, update the JSON via `PATCH`, or delete when no longer required. Inside your services, load the relevant policy and adapt behaviour—for instance, to gate customer directory access:
-
-```ts
-const policy = await fetchPolicy('service', 'customer_directory');
-if (!policy.policy.scopes.includes('customer.read')) {
-  throw new ForbiddenError('Missing customer.read scope');
-}
-```
-
-Policies provide a convenient place to centralise rules without hardcoding scopes or claims across multiple services. Extend the schema as needed (e.g., add `allowed_roles`, `subject_constraints`, etc.) to fit Solutrix’s multi-tenant requirements.
-
----
-
-## Authorization Flow Walkthrough
-
-1. **Client registration** – add redirect URIs, scopes, grant types via admin API.
-2. **User authorization** – SPA or back-end redirects to `/oauth/authorize` with PKCE parameters.
-3. **Interaction session** – user lands on `/interaction/:uid`, enters credentials, WildDuck is queried.
-4. **Grant creation** – provider creates/stores grant objects in `oidc_adapter_store`.
-5. **Token issuance** – code exchanged for access token, ID token, and optional refresh token.
-6. **Token use** – consumer calls `/userinfo` or protected resources with `Authorization: Bearer ...`.
-7. **Refresh** – app posts refresh token to `/oauth/token` (`grant_type=refresh_token`) for new access/ID tokens.
-8. **Token exchange** (optional) – services exchange tokens for different audience/permissions.
-
-The provider logs token exchange events and emits warnings when interaction payloads are missing (helpful for debugging cookie/signature issues in development).
-
----
-
-## Integrating from a TypeScript or Svelte App
-
-You can use any OIDC/OAuth client; the example below uses [`oidc-client-ts`](https://github.com/authts/oidc-client-ts), commonly used in Svelte/React/Angular projects.
-
-### Install dependencies
+#### Update client (rotate secret)
 
 ```bash
-npm install oidc-client-ts
+curl -X PUT "$IDP_BASE/api/global/admin/clients/$DB_ID" \
+  -H "$ADMIN_API_KEY_HEADER: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rotate_secret": true
+  }'
 ```
 
-### Client configuration
+#### Create policy (WIP)
 
-```ts
-// src/lib/oidcClient.ts
-import { UserManager, WebStorageStateStore } from 'oidc-client-ts';
-
-const IDP_BASE = 'http://localhost:8080';
-
-export const oidcClient = new UserManager({
-  authority: IDP_BASE,
-  client_id: 'a4e4ab9f-fc30-4a56-a56b-59518c808e66',
-  client_secret: 'b5b5b8439853bed26fb3d98064b4e77f1d2d21b3f75a4c823e5071bfecc2c538',
-  redirect_uri: 'http://localhost:3000/callback',
-  post_logout_redirect_uri: 'http://localhost:3000/',
-  response_type: 'code',
-  scope: 'openid profile email offline_access',
-  monitorSession: false,
-  userStore: new WebStorageStateStore({ store: window.localStorage }),
-});
-```
-
-### Svelte example (component)
-
-```svelte
-<script lang="ts">
-  import { onMount } from 'svelte';
-  import { oidcClient } from './lib/oidcClient';
-  import type { User } from 'oidc-client-ts';
-
-  let user: User | null = null;
-  let error: string | null = null;
-
-  onMount(async () => {
-    try {
-      const existing = await oidcClient.getUser();
-      if (existing && !existing.expired) {
-        user = existing;
-        return;
-      }
-
-      await oidcClient.signinRedirect(); // Browser navigates to IDP
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+```bash
+curl -X POST "$IDP_BASE/api/global/admin/policies" \
+  -H "$ADMIN_API_KEY_HEADER: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "example-policy",
+    "target_type": "client",
+    "target_id": "optional-target",
+    "policy": {
+      "note": "schema is WIP"
     }
-  });
-</script>
-
-{#if error}
-  <p class="error">{error}</p>
-{:else if user}
-  <h2>Welcome {user.profile?.name}</h2>
-  <button on:click={() => oidcClient.signoutRedirect()}>Sign out</button>
-{:else}
-  <p>Redirecting to sign in…</p>
-{/if}
+  }'
 ```
 
-### Callback handler (Svelte route or standalone page)
+#### Create SAML SP (WIP)
 
-```svelte
-<script lang="ts">
-  import { onMount } from 'svelte';
-  import { oidcClient } from './lib/oidcClient';
-
-  onMount(async () => {
-    await oidcClient.signinCallback(); // Exchanges code + PKCE verifier
-    window.location.replace('/');      // Redirect back into the app
-  });
-</script>
-
-<p>Completing sign-in…</p>
+```bash
+curl -X POST "$IDP_BASE/api/global/admin/sps" \
+  -H "$ADMIN_API_KEY_HEADER: $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_id": "urn:example:sp",
+    "acs": ["https://sp.example.com/saml/acs"],
+    "binding": "post",
+    "attr_mapping": { "email": "mail" }
+  }'
 ```
 
-### Refresh tokens & silent renewal
+#### Rotate signing key
 
-- `oidc-client-ts` automatically handles refresh token exchange if `offline_access` is granted and the token endpoint permits refresh. Use `signinSilent` if you configure an iframe-based silent callback, or rely on refresh tokens with background calls in your store/service layer.
-- Check `userManager.events.addAccessTokenExpired(...)` to hook into expiration events and call `signinSilent` or `signinRedirect`.
+```bash
+curl -X POST "$IDP_BASE/api/global/admin/keys/rotate" \
+  -H "$ADMIN_API_KEY_HEADER: $ADMIN_API_KEY"
+```
 
-### Token Exchange (optional advanced use)
+### Endpoint Summary
 
-If your SPA needs to exchange tokens for other audiences (e.g., APIs with different scopes), call `/oauth/token` with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`. Ensure the client has the grant enabled when registering via admin API.
+Clients:
+- `GET /api/global/admin/clients`
+- `GET /api/global/admin/clients/:id`
+- `POST /api/global/admin/clients`
+- `PUT /api/global/admin/clients/:id`
+- `DELETE /api/global/admin/clients/:id`
 
----
+Policies (WIP):
+- `GET /api/global/admin/policies`
+- `GET /api/global/admin/policies/:id`
+- `POST /api/global/admin/policies`
+- `PUT /api/global/admin/policies/:id`
+- `DELETE /api/global/admin/policies/:id`
 
-## Troubleshooting
+SAML SPs (WIP):
+- `GET /api/global/admin/sps`
+- `GET /api/global/admin/sps/:id`
+- `POST /api/global/admin/sps`
+- `PUT /api/global/admin/sps/:id`
+- `DELETE /api/global/admin/sps/:id`
 
-| Symptom                                             | Likely Cause / Fix                                                                                          |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `interaction session not found` after login POST    | Browser didn’t send interaction cookie. In dev, verify `OIDC_COOKIE_KEYS`, ensure the host matches, or add `prompt=consent`. |
-| `Invalid value "undefined" for header "Location"`   | Interaction payload missing `returnTo`. Check interaction rows in `oidc_adapter_store` and ensure payload isn’t empty (fixed by accessing `entry.get('payload')`). |
-| `invalid_client_metadata` when creating client      | `grant_types` or `redirect_uris` include unsupported values. Ensure only standard grants (plus token exchange) are used. |
-| No refresh token returned                           | Either `offline_access` scope not requested, or existing grant didn’t include it. Use `prompt=consent`.     |
-| Cookies complaining about HTTPS                     | In development `NODE_ENV=development`, so cookies are flagged non-secure. For production, ensure HTTPS.     |
+Keys:
+- `POST /api/global/admin/keys/rotate`
 
-Enable verbose logging by setting `LOG_LEVEL=debug` and watch the console for `[adapter:*]` messages.
+## Admin GUI (Dev-Only)
 
----
+The Admin GUI is a lightweight HTML tool for development/testing that calls the same admin routes via `/gui/api/*`.
 
-## Further Reading
+Enable/disable:
+- `ENABLE_GUI=true` enables:
+  - `GET /gui` (HTML UI)
+  - `/gui/api/*` (admin API behind Basic auth)
+- `ENABLE_GUI=false` disables it entirely (recommended for production).
 
-- [oidc-provider documentation](https://oidc-provider.readthedocs.io/)
-- [OAuth 2.0 Token Exchange RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693)
-- [OIDC Core specification](https://openid.net/specs/openid-connect-core-1_0.html)
-- [WildDuck API](https://wildduck.email/docs/) – to understand how user metadata is retrieved
-- [`oidc-client-ts` guide](https://authts.github.io/oidc-client-ts/) for SPA integrations
+Authentication:
+- HTTP Basic auth via `MASTER_USER` + `MASTER_PASSWORD`
 
----
+How to use:
+1. Set `ENABLE_GUI=true`, `MASTER_USER`, `MASTER_PASSWORD`.
+2. Open `http://localhost:8080/gui`.
+3. Enter master credentials, choose resource + operation, click Run.
 
-## License
+Security notes:
+- Do not expose `/gui` to the public internet.
+- Treat it as a dev convenience, not a production admin surface.
 
-This repository is private to Solutrix. If you intend to open source, add the appropriate license here.
+## OpenAPI / Swagger UI
 
----
+The OpenAPI spec is stored as a static artifact:
+- Source file: `public/openapi.json`
+- Served as JSON: `GET /docs.json`
+- Swagger UI: `GET /docs`
 
-Happy authenticating! If you encounter issues or want to extend functionality (custom prompts, additional grant types, etc.), review the controllers under `src/controllers` and the provider bootstrap in `src/oidc/provider.ts`. All custom behaviour is centralized there.
+## Configuration (Environment Variables)
+
+Required for a typical dev setup:
+- `DATABASE_URL` (PostgreSQL connection string)
+- `WD_API_URL`, `WD_API_KEY` (WildDuck API access)
+- `ADMIN_API_KEY` (admin API authentication)
+- at least one signing key row in `jwt_rsa256_keys` (or rotate one via admin endpoint)
+
+Common optional variables:
+- `PORT` (default: `8080`)
+- `HOST` (default: `0.0.0.0`)
+- `OIDC_ISSUER` (defaults to `http://localhost:$PORT`)
+- `OIDC_COOKIE_KEYS` (comma-separated; used to sign cookies)
+- `CORS_ORIGINS` (comma-separated list; unset disables CORS)
+- `ADMIN_API_KEY_HEADER` (default: `x-admin-api-key`)
+- `ENABLE_GUI` (default: `false`)
+- `MASTER_USER`, `MASTER_PASSWORD` (required if GUI is enabled)
+
+Reference: `.template.env`
+
+## Development
+
+```bash
+npm run migrate
+npm run dev
+```
+
+Typecheck only:
+
+```bash
+./node_modules/.bin/tsc -p tsconfig.json --noEmit
+```
+
+Docs:
+- `http://localhost:8080/docs` (Swagger UI)
+- `http://localhost:8080/.well-known/openid-configuration` (OIDC discovery)
+

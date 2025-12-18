@@ -7,6 +7,8 @@ import {
     mergeIdpLoginMetadata,
 } from "../services/wildduckUserService.js";
 import { wds } from "../config/db.js";
+import { renderConsentPage } from "../views/interaction/consentPage.js";
+import { renderLoginPage } from "../views/interaction/loginPage.js";
 import type { Provider } from "oidc-provider";
 
 type InteractionDetails = Awaited<ReturnType<Provider["interactionDetails"]>>;
@@ -34,182 +36,6 @@ const signInteractionCookie = (cookieName: string, value: string): string => {
         .replace(/\//g, "_")
         .replace(/\+/g, "-")
         .replace(/=/g, "");
-};
-
-/**
- * Escape HTML special characters.
- *
- * @param value - Raw string.
- * @returns Escaped string safe for HTML output.
- */
-/**
- * Escape HTML special characters.
- *
- * @param value - Raw string or undefined.
- * @returns Escaped string safe for HTML output.
- */
-const escapeHtml = (value?: string): string => {
-    if (!value) {
-        return "";
-    }
-    return value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-};
-
-/**
- * Render the login HTML template shown during OIDC interactions.
- *
- * @param options - Template data including UID, client information, and messages.
- * @returns HTML markup.
- */
-/**
- * Render the login HTML template shown during OIDC interactions.
- *
- * @param options.uid - Interaction identifier.
- * @param options.clientName - Display name of the requesting client.
- * @param options.scope - Requested scope string (optional).
- * @param options.username - Pre-filled username (optional).
- * @param options.error - Error message to highlight (optional).
- * @returns HTML markup.
- */
-const renderLoginTemplate = (options: {
-    uid: string;
-    clientName: string;
-    scope?: string;
-    username?: string;
-    error?: string;
-}): string => {
-    const { uid, clientName, scope, username, error } = options;
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(clientName)} &middot; Sign in</title>
-    <style>
-        :root {
-            color-scheme: light dark;
-        }
-
-        body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            display: flex;
-            min-height: 100vh;
-            margin: 0;
-            align-items: center;
-            justify-content: center;
-            background: #0b1929;
-            background: radial-gradient(circle at 10% 20%, #1b2530 0%, #0b1929 90%);
-        }
-
-        main {
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 16px;
-            padding: 32px;
-            width: min(420px, calc(100% - 32px));
-            box-shadow: 0 18px 40px rgba(11, 25, 41, 0.35);
-            backdrop-filter: blur(18px);
-            color: #f6f7fb;
-        }
-
-        h1 {
-            margin-top: 0;
-            font-size: 1.75rem;
-            font-weight: 600;
-        }
-
-        p.scope {
-            opacity: 0.75;
-            font-size: 0.9rem;
-            margin-bottom: 24px;
-        }
-
-        form {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        label {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            font-weight: 500;
-        }
-
-        input {
-            padding: 12px;
-            border-radius: 10px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            background: rgba(11, 25, 41, 0.5);
-            color: inherit;
-            font-size: 1rem;
-        }
-
-        input:focus {
-            outline: 2px solid rgba(83, 187, 255, 0.6);
-            outline-offset: 1px;
-        }
-
-        button {
-            padding: 12px 16px;
-            background: linear-gradient(135deg, #4cc2ff 0%, #5777ff 100%);
-            color: #0b1929;
-            border: none;
-            border-radius: 12px;
-            font-weight: 600;
-            font-size: 1rem;
-            cursor: pointer;
-            transition: transform 120ms ease, box-shadow 120ms ease;
-        }
-
-        button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 8px 18px rgba(87, 119, 255, 0.3);
-        }
-
-        .error {
-            background: rgba(255, 85, 89, 0.18);
-            border: 1px solid rgba(255, 85, 89, 0.4);
-            color: #ff8587;
-            padding: 12px 14px;
-            border-radius: 10px;
-        }
-
-        .footer {
-            margin-top: 24px;
-            font-size: 0.8rem;
-            opacity: 0.5;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
-<main>
-    <h1>${escapeHtml(clientName)}</h1>
-    ${scope ? `<p class="scope">Requesting: ${escapeHtml(scope)}</p>` : ""}
-    ${error ? `<div class="error">${escapeHtml(error)}</div>` : ""}
-    <form method="post" action="/interaction/${encodeURIComponent(uid)}/login">
-        <input type="hidden" name="uid" value="${escapeHtml(uid)}" />
-        <label>
-            Email address
-            <input type="email" name="username" autocomplete="username" required value="${escapeHtml(username)}" />
-        </label>
-        <label>
-            Password
-            <input type="password" name="password" autocomplete="current-password" required />
-        </label>
-        <button type="submit">Continue</button>
-    </form>
-    <div class="footer">Solutrix Identity Provider</div>
-</main>
-</body>
-</html>`;
 };
 
 /**
@@ -248,7 +74,7 @@ const renderLoginView = async (
             : undefined) ??
         (typeof interaction.params?.login_hint === "string" ? interaction.params.login_hint : undefined);
 
-    const html = renderLoginTemplate({
+    const html = renderLoginPage({
         uid: effectiveUid ?? interaction.uid,
         clientName: client?.metadata?.client_name || clientId || "OIDC Client",
         scope: typeof interaction.params?.scope === "string" ? interaction.params.scope : undefined,
@@ -267,46 +93,12 @@ const renderConsentView = (
     params: { clientName?: string; scope?: string; uid: string; clientId?: string },
     status = 200,
 ): void => {
-    const scopeList = (params.scope || "").split(" ").filter(Boolean);
-    const scopeMarkup = scopeList
-        .map(
-            (s) =>
-                `<span style="display:inline-block;padding:6px 10px;margin:4px;border-radius:10px;background:#e2e8f0;font-weight:600;font-size:13px;color:#0f172a;">${s}</span>`,
-        )
-        .join("") || '<em style="color:#475569;">No scopes requested</em>';
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Consent &middot; ${params.clientName || params.clientId || "Client"}</title>
-  <style>
-    body { margin:0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0b1929; display:flex; min-height:100vh; align-items:center; justify-content:center; }
-    main { background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:28px; width:min(520px, calc(100% - 32px)); color:#f8fafc; box-shadow:0 24px 60px rgba(0,0,0,0.35); }
-    h1 { margin:0 0 6px; font-size:22px; }
-    p { margin:4px 0 10px; color:#cbd5e1; }
-    form { margin-top:14px; display:flex; gap:12px; }
-    button { border:none; border-radius:10px; padding:12px 16px; font-weight:700; cursor:pointer; font-size:14px; }
-    .approve { background: linear-gradient(135deg,#22d3ee,#6366f1); color:#0b1929; box-shadow:0 10px 30px rgba(99,102,241,0.35); }
-    .deny { background:#0f172a; color:#e2e8f0; border:1px solid #1e293b; }
-    .scopes { margin:12px 0 6px; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Allow ${params.clientName || params.clientId || "this app"}?</h1>
-    <p>This application is requesting access with the following scopes:</p>
-    <div class="scopes">${scopeMarkup}</div>
-    <form method="post" action="/interaction/${params.uid}/confirm">
-      <button class="approve" type="submit">Allow</button>
-    </form>
-    <form method="post" action="/interaction/${params.uid}/abort">
-      <button class="deny" type="submit">Deny</button>
-    </form>
-  </main>
-</body>
-</html>`;
+    const html = renderConsentPage({
+        uid: params.uid,
+        clientName: params.clientName,
+        clientId: params.clientId,
+        scope: params.scope,
+    });
 
     res.status(status).type("html").send(html);
 };
