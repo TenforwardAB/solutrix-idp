@@ -128,7 +128,15 @@ export const createClient = async (req: Request, res: Response): Promise<void> =
         req.body.post_logout_redirect_uris ?? req.body.postLogoutRedirectUris,
     );
 
-    if (!name || redirectUris.length === 0 || grantTypes.length === 0) {
+    const isClientCredentialsOnly =
+        grantTypes.length === 1 && grantTypes[0] === "client_credentials";
+
+    if (!name || grantTypes.length === 0) {
+        res.status(400).json({ error: "invalid_client_payload" });
+        return;
+    }
+
+    if (!isClientCredentialsOnly && redirectUris.length === 0) {
         res.status(400).json({ error: "invalid_client_payload" });
         return;
     }
@@ -204,7 +212,10 @@ export const updateClient = async (req: Request, res: Response): Promise<void> =
         }
         if (req.body.redirect_uris || req.body.redirectUris) {
             const redirectUris = toStringArray(req.body.redirect_uris ?? req.body.redirectUris);
-            if (redirectUris.length === 0) {
+            const grantTypes = toStringArray(req.body.grant_types ?? req.body.grantTypes ?? client.get("grantTypes"));
+            const isClientCredentialsOnly = grantTypes.length === 1 && grantTypes[0] === "client_credentials";
+
+            if (!isClientCredentialsOnly && redirectUris.length === 0) {
                 await transaction.rollback();
                 res.status(400).json({ error: "redirect_uris_required" });
                 return;
@@ -595,15 +606,23 @@ const syncProviderClient = async (client: {
     const provider = await getProvider();
     const grantTypes = normalizeGrantTypes(client.grantTypes);
 
+    const isClientCredentialsOnly = grantTypes.length === 1 && grantTypes[0] === "client_credentials";
+
     const metadata: Record<string, unknown> = {
         client_id: client.clientId,
         client_secret: client.clientSecret,
-        redirect_uris: client.redirectUris,
         grant_types: grantTypes,
-        response_types: grantTypes.includes("implicit") ? ["code", "id_token"] : ["code"],
         token_endpoint_auth_method: "client_secret_basic",
         scope: client.scopes.length > 0 ? client.scopes.join(" ") : undefined,
     };
+
+    if (!isClientCredentialsOnly) {
+        metadata.redirect_uris = client.redirectUris;
+        metadata.response_types = grantTypes.includes("implicit") ? ["code", "id_token"] : ["code"];
+    } else {
+        metadata.redirect_uris = [];
+        metadata.response_types = [];
+    }
 
     if (client.name) {
         metadata.client_name = client.name;

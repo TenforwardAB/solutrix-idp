@@ -47,7 +47,7 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
     }
 
     .shell {
-      width: min(1200px, 100%);
+      width: min(1280px, 100%);
       display: grid;
       gap: 18px;
     }
@@ -93,9 +93,9 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
       grid-template-columns: 1fr;
     }
 
-    @media (min-width: 960px) {
+    @media (min-width: 1080px) {
       .grid {
-        grid-template-columns: 7fr 5fr;
+        grid-template-columns: 6fr 5fr;
       }
     }
 
@@ -125,22 +125,13 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
 
-    pre {
-      background: #0f172a;
-      color: #e2e8f0;
-      border-radius: 12px;
-      padding: 14px;
-      border: 1px solid #1e293b;
-      overflow-x: auto;
-      min-height: 200px;
-    }
-
     .topbar {
       display: flex;
-      justify-content: flex-end;
+      justify-content: space-between;
       align-items: center;
       gap: 10px;
-      grid-column: 1 / -1;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
     }
 
     .theme-toggle {
@@ -166,9 +157,56 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
       clip: rect(0, 0, 0, 0);
       border: 0;
     }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    table tr {
+      cursor: pointer;
+    }
+
+    table tr.selected {
+      background: rgba(15, 111, 255, 0.08);
+    }
+
+    table th, table td {
+      border-bottom: 1px solid var(--panel-border);
+      padding: 10px 8px;
+      vertical-align: top;
+    }
+
+    .table-wrapper {
+      overflow-x: auto;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(15, 111, 255, 0.08);
+      color: #0f3e9c;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 <body>
+  <dialog id="secretModal">
+    <article>
+      <header>
+        <h3>Copy client credentials</h3>
+      </header>
+      <p class="muted">Store this client_id and client_secret now. The secret cannot be retrieved later.</p>
+      <pre id="secretContent" class="text-xs"></pre>
+      <footer>
+        <button id="closeSecret" class="secondary">Close</button>
+      </footer>
+    </article>
+  </dialog>
   <div class="shell">
     <header class="hero">
       <div class="brand-line">
@@ -184,74 +222,23 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
     <div class="grid">
       <article class="panel">
         <div class="topbar">
-          <button type="button" class="secondary theme-toggle" data-theme-toggle onclick="window.solutrixToggleTheme?.()">
-            <span class="icon" aria-hidden="true">☀️</span>
-            <span class="sr-only">Toggle theme</span>
-          </button>
-        </div>
-        <div class="row">
-          <div>
-            <label for="resource">Resource</label>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <label for="resource" style="margin:0;">Resource</label>
             <select id="resource">
               <option value="clients">Clients</option>
               <option value="policies">Policies</option>
               <option value="sps">Service Providers</option>
             </select>
+            <button type="button" id="listBtn" class="secondary">List</button>
+            <button type="button" id="createBtn">Create new</button>
           </div>
-          <div>
-            <label for="operation">Operation</label>
-            <select id="operation">
-              <option value="list">List</option>
-              <option value="create">Create</option>
-              <option value="update">Update</option>
-              <option value="delete">Delete</option>
-            </select>
-          </div>
-          <div>
-            <label for="recordId">Record ID (for update/delete)</label>
-            <input id="recordId" placeholder="UUID / database id" />
-          </div>
+          <button type="button" class="secondary theme-toggle" data-theme-toggle onclick="window.solutrixToggleTheme?.()">
+            <span class="icon" aria-hidden="true">☀️</span>
+            <span class="sr-only">Toggle theme</span>
+          </button>
         </div>
 
-        <div id="form-clients" class="">
-          <div class="row">
-            <div><label>Name</label><input id="client_name" placeholder="example-app" /></div>
-            <div><label>Client Secret (optional for update)</label><input id="client_secret" placeholder="auto if empty" /></div>
-          </div>
-          <label>Redirect URIs (one per line)</label>
-          <textarea id="client_redirects" placeholder="http://localhost:3000/callback"></textarea>
-          <label>Post-logout Redirect URIs (one per line)</label>
-          <textarea id="client_post_logout" placeholder="http://localhost:5173/"></textarea>
-          <label>Grant Types (one per line)</label>
-          <textarea id="client_grants" placeholder="authorization_code&#10;refresh_token"></textarea>
-          <label>Scopes (one per line)</label>
-          <textarea id="client_scopes" placeholder="openid&#10;profile&#10;email"></textarea>
-        </div>
-
-        <div id="form-policies" class="hidden">
-          <div class="row">
-            <div><label>Name</label><input id="policy_name" placeholder="require-2fa" /></div>
-            <div><label>Target Type</label><input id="policy_target_type" placeholder="client|user|service" /></div>
-            <div><label>Target ID (optional)</label><input id="policy_target_id" placeholder="client-id or user-id" /></div>
-          </div>
-          <label>Policy JSON</label>
-          <textarea id="policy_body" placeholder='{\"rule\":\"allow\"}'></textarea>
-        </div>
-
-        <div id="form-sps" class="hidden">
-          <div class="row">
-            <div><label>Entity ID</label><input id="sp_entity" placeholder="urn:example:sp" /></div>
-            <div><label>Binding</label><input id="sp_binding" placeholder="post|redirect" /></div>
-          </div>
-          <label>ACS Endpoints (one per line)</label>
-          <textarea id="sp_acs" placeholder="https://app.example.com/saml/acs"></textarea>
-          <label>Metadata XML (optional)</label>
-          <textarea id="sp_metadata" placeholder="<EntityDescriptor>...</EntityDescriptor>"></textarea>
-          <label>Attribute Mapping JSON</label>
-          <textarea id="sp_attrs" placeholder='{\"email\":\"mail\",\"name\":\"displayName\"}'></textarea>
-        </div>
-
-        <div class="row" style="align-items:center;margin-top:12px;">
+        <div class="row" style="margin-bottom:8px;">
           <div>
             <label for="username">MASTER_USER</label>
             <input id="username" value="${escapeHtml(masterUser)}" />
@@ -260,8 +247,59 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
             <label for="password">MASTER_PASSWORD</label>
             <input id="password" type="password" placeholder="Enter master password" />
           </div>
-          <div style="align-self:flex-end;">
-            <button id="run">Run</button>
+          <div>
+            <label for="status">Status</label>
+            <input id="status" readonly value="Ready" />
+          </div>
+        </div>
+
+        <div id="form-clients" class="">
+          <p class="muted" id="mode-clients">Mode: Create</p>
+          <div class="row">
+            <div><label for="client_name">Name</label><input id="client_name" placeholder="example-app" /></div>
+            <div><label for="client_secret">Client Secret (optional for update)</label><input id="client_secret" placeholder="leave blank to keep" /></div>
+          </div>
+          <label for="client_redirects">Redirect URIs (one per line)</label>
+          <textarea id="client_redirects" placeholder="http://localhost:3000/callback"></textarea>
+          <label for="client_post_logout">Post-logout Redirect URIs (one per line)</label>
+          <textarea id="client_post_logout" placeholder="http://localhost:5173/"></textarea>
+          <label for="client_grants">Grant Types (one per line)</label>
+          <textarea id="client_grants" placeholder="authorization_code&#10;refresh_token"></textarea>
+          <label for="client_scopes">Scopes (one per line)</label>
+          <textarea id="client_scopes" placeholder="openid&#10;profile&#10;email"></textarea>
+        </div>
+
+        <div id="form-policies" class="hidden">
+          <p class="muted" id="mode-policies">Mode: Create</p>
+          <div class="row">
+            <div><label for="policy_name">Name</label><input id="policy_name" placeholder="require-2fa" /></div>
+            <div><label for="policy_target_type">Target Type</label><input id="policy_target_type" placeholder="client|user|service" /></div>
+            <div><label for="policy_target_id">Target ID (optional)</label><input id="policy_target_id" placeholder="client-id or user-id" /></div>
+          </div>
+          <label for="policy_body">Policy JSON</label>
+          <textarea id="policy_body" placeholder='{\"rule\":\"allow\"}'></textarea>
+        </div>
+
+        <div id="form-sps" class="hidden">
+          <p class="muted" id="mode-sps">Mode: Create</p>
+          <div class="row">
+            <div><label for="sp_entity">Entity ID</label><input id="sp_entity" placeholder="urn:example:sp" /></div>
+            <div><label for="sp_binding">Binding</label><input id="sp_binding" placeholder="post|redirect" /></div>
+          </div>
+          <label for="sp_acs">ACS Endpoints (one per line)</label>
+          <textarea id="sp_acs" placeholder="https://app.example.com/saml/acs"></textarea>
+          <label for="sp_metadata">Metadata XML (optional)</label>
+          <textarea id="sp_metadata" placeholder="<EntityDescriptor>...</EntityDescriptor>"></textarea>
+          <label for="sp_attrs">Attribute Mapping JSON</label>
+          <textarea id="sp_attrs" placeholder='{\"email\":\"mail\",\"name\":\"displayName\"}'></textarea>
+        </div>
+
+        <div class="row" style="align-items:center;margin-top:12px;">
+          <div>
+            <button id="saveBtn">Save</button>
+          </div>
+          <div>
+            <button class="secondary" id="deleteBtn">Delete selected</button>
           </div>
         </div>
       </article>
@@ -269,23 +307,41 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
       <article class="panel">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
           <div>
-            <p style="margin:0;font-weight:700;letter-spacing:0.08em;font-size:12px;" class="muted">Result</p>
-            <h3 style="margin:2px 0;">API Response</h3>
+            <p style="margin:0;font-weight:700;letter-spacing:0.08em;font-size:12px;" class="muted">Listing</p>
+            <h3 style="margin:2px 0;">Records</h3>
           </div>
-          <span class="muted">Requests hit /gui/api (master auth).</span>
+          <span class="muted">Click a row to edit. Requests hit /gui/api (master auth).</span>
         </div>
-        <pre id="output">Awaiting action...</pre>
+        <div class="table-wrapper">
+          <table id="listTable">
+            <thead id="listHead"></thead>
+            <tbody id="listBody"></tbody>
+          </table>
+        </div>
+        <div style="margin-top:12px;">
+          <pre id="output">Awaiting action...</pre>
+        </div>
+        <div id="secretInline" class="hidden" style="margin-top:12px;">
+          <div class="alert">
+            <strong>Copy these credentials now:</strong>
+            <pre id="secretInlineContent" class="text-xs"></pre>
+          </div>
+        </div>
       </article>
     </div>
   </div>
   <script>
     const resource = document.getElementById('resource');
-    const operation = document.getElementById('operation');
-    const recordId = document.getElementById('recordId');
     const username = document.getElementById('username');
     const password = document.getElementById('password');
+    const statusEl = document.getElementById('status');
     const output = document.getElementById('output');
-    const runBtn = document.getElementById('run');
+    const listHead = document.getElementById('listHead');
+    const listBody = document.getElementById('listBody');
+    const listBtn = document.getElementById('listBtn');
+    const createBtn = document.getElementById('createBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const deleteBtn = document.getElementById('deleteBtn');
 
     const forms = {
       clients: document.getElementById('form-clients'),
@@ -293,17 +349,43 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
       sps: document.getElementById('form-sps'),
     };
 
+    const modes = {
+      clients: document.getElementById('mode-clients'),
+      policies: document.getElementById('mode-policies'),
+      sps: document.getElementById('mode-sps'),
+    };
+
+    const state = {
+      resource: resource.value,
+      selection: null,
+      data: [],
+    };
+
     const showForm = () => {
-      const res = resource.value;
+      const res = state.resource;
       Object.entries(forms).forEach(([key, el]) => {
         if (el) el.classList.toggle('hidden', key !== res);
       });
+      Object.entries(modes).forEach(([key, el]) => {
+        if (el) el.textContent = \`Mode: \${state.selection && state.resource === key ? 'Edit' : 'Create'}\`;
+      });
     };
-    resource.addEventListener('change', showForm);
+    resource.addEventListener('change', () => {
+      state.resource = resource.value;
+      state.selection = null;
+      setStatus('Ready');
+      clearForm();
+      renderTable();
+      showForm();
+    });
     showForm();
 
     const setOutput = (value) => {
       output.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    };
+
+    const setStatus = (text) => {
+      statusEl.value = text;
     };
 
     const buildAuthHeader = () => {
@@ -313,10 +395,66 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
     };
 
     const splitLines = (value) => value.split(/\\r?\\n/).map((v) => v.trim()).filter(Boolean);
+    const joinLines = (arr) => Array.isArray(arr) ? arr.join('\\n') : '';
+
+    const clearForm = () => {
+      if (state.resource === 'clients') {
+        document.getElementById('client_name').value = '';
+        document.getElementById('client_secret').value = '';
+        document.getElementById('client_redirects').value = '';
+        document.getElementById('client_post_logout').value = '';
+        document.getElementById('client_grants').value = '';
+        document.getElementById('client_scopes').value = '';
+      }
+      if (state.resource === 'policies') {
+        document.getElementById('policy_name').value = '';
+        document.getElementById('policy_target_type').value = '';
+        document.getElementById('policy_target_id').value = '';
+        document.getElementById('policy_body').value = '';
+      }
+      if (state.resource === 'sps') {
+        document.getElementById('sp_entity').value = '';
+        document.getElementById('sp_binding').value = '';
+        document.getElementById('sp_acs').value = '';
+        document.getElementById('sp_metadata').value = '';
+        document.getElementById('sp_attrs').value = '';
+      }
+      state.selection = null;
+      showForm();
+    };
+
+    const fillForm = (item) => {
+      if (state.resource === 'clients') {
+        document.getElementById('client_name').value = item.name || '';
+        document.getElementById('client_secret').value = '';
+        document.getElementById('client_redirects').value = joinLines(item.redirectUris || item.redirect_uris || []);
+        document.getElementById('client_post_logout').value = joinLines(item.postLogoutRedirectUris || item.post_logout_redirect_uris || []);
+        document.getElementById('client_grants').value = joinLines(item.grantTypes || item.grant_types || []);
+        document.getElementById('client_scopes').value = joinLines(item.scopes || []);
+      }
+      if (state.resource === 'policies') {
+        document.getElementById('policy_name').value = item.name || '';
+        document.getElementById('policy_target_type').value = item.targetType || item.target_type || '';
+        document.getElementById('policy_target_id').value = item.targetId || item.target_id || '';
+        document.getElementById('policy_body').value = item.policy ? JSON.stringify(item.policy, null, 2) : '';
+      }
+      if (state.resource === 'sps') {
+        document.getElementById('sp_entity').value = item.entityId || item.entity_id || '';
+        document.getElementById('sp_binding').value = item.binding || '';
+        document.getElementById('sp_acs').value = joinLines(item.acsEndpoints || item.acs || item.acs_endpoints || []);
+        document.getElementById('sp_metadata').value = item.metadataXml || item.metadata_xml || '';
+        document.getElementById('sp_attrs').value = item.attributeMapping
+          ? JSON.stringify(item.attributeMapping, null, 2)
+          : item.attr_mapping
+          ? JSON.stringify(item.attr_mapping, null, 2)
+          : '';
+      }
+      state.selection = item;
+      showForm();
+    };
 
     const buildPayload = () => {
-      const res = resource.value;
-      if (res === 'clients') {
+      if (state.resource === 'clients') {
         const redirects = splitLines(document.getElementById('client_redirects').value);
         const postLogout = splitLines(document.getElementById('client_post_logout').value);
         const grants = splitLines(document.getElementById('client_grants').value);
@@ -332,7 +470,7 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
         Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
         return payload;
       }
-      if (res === 'policies') {
+      if (state.resource === 'policies') {
         let policyJson = {};
         const raw = document.getElementById('policy_body').value.trim();
         if (raw) {
@@ -347,7 +485,7 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
         Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
         return payload;
       }
-      if (res === 'sps') {
+      if (state.resource === 'sps') {
         let attrMap = {};
         const attrsRaw = document.getElementById('sp_attrs').value.trim();
         if (attrsRaw) {
@@ -366,48 +504,140 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
       return {};
     };
 
-    const callApi = async () => {
-      const res = resource.value;
-      const op = operation.value;
-      const id = recordId.value.trim();
-      let method = 'GET';
-      let path = '/gui/api/' + res;
-      let body;
-
-      if (op === 'create') { method = 'POST'; body = buildPayload(); }
-      if (op === 'update') { method = 'PUT'; path += id ? '/' + encodeURIComponent(id) : ''; body = buildPayload(); }
-      if (op === 'delete') { method = 'DELETE'; path += id ? '/' + encodeURIComponent(id) : ''; }
-
-      if ((op === 'update' || op === 'delete') && !id) {
-        setOutput({ error: 'Record ID is required for update/delete' });
-        return;
-      }
-
-      try {
-        const response = await fetch(path, {
-          method,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': buildAuthHeader(),
-          },
-          body: body ? JSON.stringify(body) : undefined,
-        });
-        const text = await response.text();
-        let data;
-        try { data = JSON.parse(text); } catch { data = text; }
-        setOutput({ status: response.status, data });
-      } catch (err) {
-        setOutput({ error: 'Request failed', details: String(err) });
-      }
+    const apiFetch = async (path, options = {}) => {
+      const resp = await fetch(path, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': buildAuthHeader(),
+          ...(options.headers || {}),
+        },
+      });
+      const text = await resp.text();
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = text; }
+      return { resp, parsed };
     };
 
-    runBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      try {
-        callApi();
-      } catch (err) {
-        setOutput({ error: String(err) });
+    const loadList = async () => {
+      setStatus('Loading...');
+      const { resp, parsed } = await apiFetch('/gui/api/' + state.resource);
+      if (!resp.ok) {
+        setStatus('List failed');
+        setOutput(parsed);
+        return;
       }
+      state.data = Array.isArray(parsed) ? parsed : [];
+      setStatus(\`Loaded \${state.data.length}\`);
+      renderTable();
+      setOutput({ status: resp.status, count: state.data.length });
+    };
+
+    const renderTable = () => {
+      listHead.innerHTML = '';
+      listBody.innerHTML = '';
+      const data = state.data || [];
+      if (data.length === 0) {
+        listBody.innerHTML = '<tr><td colspan="4">No records.</td></tr>';
+        return;
+      }
+      const keys = Object.keys(data[0]).filter((k) => !['clientSecret', 'createdAt', 'updatedAt'].includes(k)).slice(0, 6);
+      const headRow = document.createElement('tr');
+      headRow.innerHTML = '<th>id</th>' + keys.map((k) => '<th>' + k + '</th>').join('');
+      listHead.appendChild(headRow);
+
+      data.forEach((item) => {
+        const tr = document.createElement('tr');
+        tr.dataset.id = item.id;
+        tr.innerHTML = '<td><span class="pill">' + (item.id || '').toString().slice(0, 8) + '</span></td>' +
+          keys.map((k) => '<td>' + formatCell(item[k]) + '</td>').join('');
+        if (state.selection && state.selection.id === item.id) {
+          tr.classList.add('selected');
+        }
+        tr.addEventListener('click', () => {
+          state.selection = item;
+          fillForm(item);
+          highlightSelection();
+        });
+        listBody.appendChild(tr);
+      });
+    };
+
+    const formatCell = (value) => {
+      if (Array.isArray(value)) {
+        return value.join(", ");
+      }
+      if (typeof value === 'object' && value !== null) {
+        return JSON.stringify(value);
+      }
+      return value === undefined || value === null ? '' : String(value);
+    };
+
+    const highlightSelection = () => {
+      [...listBody.querySelectorAll('tr')].forEach((tr) => {
+        tr.classList.toggle('selected', state.selection && tr.dataset.id === state.selection.id);
+      });
+    };
+
+    listBtn.addEventListener('click', () => {
+      state.selection = null;
+      clearForm();
+      loadList().catch((err) => {
+        setStatus('List failed');
+        setOutput(String(err));
+      });
+    });
+
+    createBtn.addEventListener('click', () => {
+      clearForm();
+      setStatus('Create mode');
+      setOutput('Ready to create');
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      try {
+        const payload = buildPayload();
+        const id = state.selection?.id;
+        const isEdit = Boolean(id);
+        const path = '/gui/api/' + state.resource + (isEdit ? '/' + encodeURIComponent(id) : '');
+        const method = isEdit ? 'PUT' : 'POST';
+        setStatus(isEdit ? 'Updating...' : 'Creating...');
+        const { resp, parsed } = await apiFetch(path, { method, body: JSON.stringify(payload) });
+        setOutput(parsed);
+        if (!resp.ok) {
+          setStatus(isEdit ? 'Update failed' : 'Create failed');
+          return;
+        }
+        setStatus(isEdit ? 'Updated' : 'Created');
+        if (!isEdit && parsed?.client_id && parsed?.client_secret) {
+          showSecretModal(parsed.client_id, parsed.client_secret);
+        }
+        state.selection = null;
+        clearForm();
+        await loadList();
+      } catch (err) {
+        setStatus('Save error');
+        setOutput(String(err));
+      }
+    });
+
+    deleteBtn.addEventListener('click', async () => {
+      if (!state.selection) {
+        setOutput('Select a record first');
+        return;
+      }
+      const id = state.selection.id;
+      setStatus('Deleting...');
+      const { resp, parsed } = await apiFetch('/gui/api/' + state.resource + '/' + encodeURIComponent(id), { method: 'DELETE' });
+      setOutput(parsed || { status: resp.status });
+      if (!resp.ok && resp.status !== 204) {
+        setStatus('Delete failed');
+        return;
+      }
+      setStatus('Deleted');
+      state.selection = null;
+      clearForm();
+      await loadList();
     });
 
     (() => {
@@ -444,6 +674,43 @@ export const renderAdminGuiPage = (masterUser: string): string => `<!DOCTYPE htm
           }
       });
     })();
+
+    const secretModal = document.getElementById('secretModal');
+    const secretContent = document.getElementById('secretContent');
+    const closeSecret = document.getElementById('closeSecret');
+    const secretInline = document.getElementById('secretInline');
+    const secretInlineContent = document.getElementById('secretInlineContent');
+
+    const showSecretModal = (clientId, clientSecret) => {
+      if (!secretModal || !secretContent) return;
+      const payload = { client_id: clientId, client_secret: clientSecret };
+      secretContent.textContent = JSON.stringify(payload, null, 2);
+      if (secretInline && secretInlineContent) {
+        secretInlineContent.textContent = JSON.stringify(payload, null, 2);
+        secretInline.classList.remove('hidden');
+      }
+
+      if (typeof secretModal.showModal === "function") {
+        secretModal.showModal();
+      } else {
+        secretModal.removeAttribute('open');
+        secretModal.setAttribute('open', 'true');
+      }
+    };
+
+    if (closeSecret && secretModal) {
+      const close = () => {
+        if (typeof secretModal.close === "function") {
+          secretModal.close();
+        } else {
+          secretModal.removeAttribute('open');
+        }
+        if (secretInline) {
+          secretInline.classList.add('hidden');
+        }
+      };
+      closeSecret.addEventListener('click', close);
+    }
   </script>
 </body>
 </html>`;
