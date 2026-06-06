@@ -17,6 +17,21 @@ const enableGui = (process.env.ENABLE_GUI ?? "false").toLowerCase() === "true";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const openapiJsonPath = path.join(__dirname, "..", "public", "openapi.json");
 
+const requireStrongCookieKeys = (): void => {
+    const raw = process.env.OIDC_COOKIE_KEYS || "";
+    const keys = raw
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+
+    if (keys.length < 2 || keys.some((key) => key.length < 64)) {
+        console.error(
+            "OIDC_COOKIE_KEYS must contain at least 2 comma-separated secrets, each 64+ chars.",
+        );
+        process.exit(1);
+    }
+};
+
 const parseCorsOrigins = (): cors.CorsOptions["origin"] => {
     const originsEnv = process.env.CORS_ORIGINS;
     if (!originsEnv) {
@@ -30,6 +45,7 @@ const parseCorsOrigins = (): cors.CorsOptions["origin"] => {
 };
 
 const bootstrap = async (): Promise<void> => {
+    requireStrongCookieKeys();
     const app = express();
     app.disable("x-powered-by");
     app.set("trust proxy", true);
