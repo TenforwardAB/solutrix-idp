@@ -1,5 +1,6 @@
 import { Op } from "sequelize";
 import models, { sequelize } from "../config/db.js";
+import { decryptSecret, encryptSecret } from "../services/secretStore.js";
 
 type Payload = Record<string, any>;
 
@@ -82,6 +83,9 @@ class SequelizeAdapter {
      */
     private async upsertEntry(id: string, payload: Payload, expiresAt: Date | null): Promise<void> {
         const storedPayload = { ...payload };
+        if (this.name === "Client" && typeof storedPayload.client_secret === "string") {
+            storedPayload.client_secret = encryptSecret(storedPayload.client_secret);
+        }
         const entry = {
             id,
             name: this.name,
@@ -138,6 +142,9 @@ class SequelizeAdapter {
         const rawPayload = typeof entry.get === "function" ? entry.get("payload") : entry.payload;
         const payload: Payload =
             typeof rawPayload === "string" ? JSON.parse(rawPayload) : { ...(rawPayload ?? {}) };
+        if (this.name === "Client" && typeof payload.client_secret === "string") {
+            payload.client_secret = decryptSecret(payload.client_secret);
+        }
         // Ensure numeric fields remain numbers after round-trip serialization
         const numericFields = ["exp", "iat", "nbf", "auth_time"];
         for (const field of numericFields) {

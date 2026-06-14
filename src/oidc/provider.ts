@@ -1,16 +1,32 @@
 import { Provider, type Configuration, type KoaContextWithOIDC, type Interaction } from "oidc-provider";
 import jose from "node-jose";
 import dotenv from "dotenv";
+import crypto from "node:crypto";
 import models from "../config/db.js";
 import SequelizeAdapter from "./adapter.js";
 import { buildOidcClaims, fetchWildDuckAccount } from "../services/wildduckUserService.js";
 import { registerTokenExchangeGrant } from "./tokenExchange.js";
+import { decryptSecret, encryptSecret, isEncryptedSecret } from "../services/secretStore.js";
 
 const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 
 dotenv.config();
 
 let providerInstance: Provider | null = null;
+
+const generateSigningKey = async (): Promise<void> => {
+    const keystore = jose.JWK.createKeyStore();
+    const key = await keystore.generate("RSA", 2048, { use: "sig", alg: "RS256" });
+    const publicKey = key.toPEM();
+    const privateKey = encryptSecret(key.toPEM(true));
+
+    await models.jwt_rsa256_keys.create({
+        publicKey,
+        privateKey,
+        keyId: crypto.randomBytes(4).toString("hex"),
+        isInvalid: false,
+    });
+};
 
 /**
  * Load active RSA signing keys from the database.
@@ -19,19 +35,31 @@ let providerInstance: Provider | null = null;
  */
 const loadSigningKeys = async (): Promise<jose.JWK.KeyStore> => {
     const keystore = jose.JWK.createKeyStore();
-    const keyRows = await models.jwt_rsa256_keys.findAll({
+    let keyRows = await models.jwt_rsa256_keys.findAll({
         where: { isInvalid: false },
         order: [["createdAt", "DESC"]],
     });
 
     if (!keyRows || keyRows.length === 0) {
-        throw new Error("No active signing keys found in jwt_rsa256_keys");
+        if ((process.env.OIDC_AUTO_GENERATE_SIGNING_KEY ?? "false").toLowerCase() !== "true") {
+            throw new Error("No active signing keys found in jwt_rsa256_keys");
+        }
+        console.warn("[oidc] No active signing keys found; generating initial RS256 signing key.");
+        await generateSigningKey();
+        keyRows = await models.jwt_rsa256_keys.findAll({
+            where: { isInvalid: false },
+            order: [["createdAt", "DESC"]],
+        });
     }
 
     for (const keyRow of keyRows) {
         const record = keyRow.get({ plain: true }) as { privateKey: string; keyId: string };
-        const privateKey = record.privateKey;
+        const privateKey = decryptSecret(record.privateKey);
         const kid = record.keyId;
+
+        if (!isEncryptedSecret(record.privateKey)) {
+            await keyRow.update({ privateKey: encryptSecret(record.privateKey) });
+        }
 
         await keystore.add(privateKey, "pem", {
             kid,
@@ -102,15 +130,20 @@ type DbClientRecord = {
 const fetchDbClients = async (): Promise<Configuration["clients"]> => {
     const rows = await models.oidc_clients.findAll({ order: [["createdAt", "ASC"]] });
 
-    const normalized = rows.map((row: any) => {
+    const normalized = await Promise.all(rows.map(async (row: any) => {
         const data = row.get({ plain: true }) as DbClientRecord;
         const redirectUris = Array.isArray(data.redirectUris) ? data.redirectUris : [];
         const grantTypes = Array.isArray(data.grantTypes) ? data.grantTypes : [];
         const scopes = Array.isArray(data.scopes) ? data.scopes : [];
+        const clientSecret = decryptSecret(data.clientSecret);
+
+        if (!isEncryptedSecret(data.clientSecret)) {
+            await row.update({ clientSecret: encryptSecret(data.clientSecret) });
+        }
 
         return {
             client_id: data.clientId,
-            client_secret: data.clientSecret,
+            client_secret: clientSecret,
             redirect_uris: redirectUris,
             grant_types: grantTypes,
             response_types: grantTypes.includes("implicit") ? ["code", "id_token"] : ["code"],
@@ -121,7 +154,7 @@ const fetchDbClients = async (): Promise<Configuration["clients"]> => {
                     ? data.postLogoutRedirectUris
                     : undefined,
         } satisfies Configuration["clients"][number];
-    });
+    }));
 
     console.log(`[oidc] Fetched ${normalized.length} client(s) from database.`);
     if (normalized.length > 0) {

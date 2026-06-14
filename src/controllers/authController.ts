@@ -9,6 +9,11 @@ import {
 import { wds } from "../config/db.js";
 import { renderConsentPage } from "../views/interaction/consentPage.js";
 import { renderLoginPage } from "../views/interaction/loginPage.js";
+import {
+    getLoginBackoff,
+    recordLoginFailure,
+    resetLoginFailures,
+} from "../services/loginAttemptService.js";
 import type { Provider } from "oidc-provider";
 
 type InteractionDetails = Awaited<ReturnType<Provider["interactionDetails"]>>;
@@ -19,6 +24,12 @@ const cookieKeyStrings = (process.env.OIDC_COOKIE_KEYS || "default-cookie-secret
     .filter((value) => value.length > 0);
 const interactionCookiePrimaryKey =
     cookieKeyStrings.length > 0 ? cookieKeyStrings[0] : "default-cookie-secret-change-me";
+const invalidLoginMessage = "Invalid username or password.";
+
+const getRequestIp = (req: Request): string | undefined =>
+    (typeof req.headers["x-forwarded-for"] === "string"
+        ? req.headers["x-forwarded-for"].split(",")[0]?.trim()
+        : undefined) || req.ip || req.socket.remoteAddress || undefined;
 
 /**
  * Sign an interaction cookie using the configured HMAC secret.
@@ -274,6 +285,8 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
 
         const username = typeof req.body.username === "string" ? req.body.username.trim() : "";
         const password = typeof req.body.password === "string" ? req.body.password : "";
+        const clientId = interaction.params?.client_id as string | undefined;
+        const loginIp = getRequestIp(req);
 
         if (!username || !password) {
             await renderLoginView(provider, res, interaction, {
@@ -284,13 +297,33 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
             return;
         }
 
+        const backoff = await getLoginBackoff(username, loginIp);
+        if (backoff.locked) {
+            console.warn("login temporarily blocked", {
+                username: username.toLowerCase(),
+                ip: loginIp || "unknown",
+                clientId,
+                lockedUntil: backoff.lockedUntil?.toISOString(),
+            });
+            await renderLoginView(provider, res, interaction, {
+                error: invalidLoginMessage,
+                username,
+                status: 401,
+            }, explicitUid);
+            return;
+        }
+
         let userId: string;
 
         try {
             userId = await authenticateWildDuckUser(username, password);
         } catch {
+            await recordLoginFailure(username, loginIp, {
+                clientId,
+                userAgent: req.headers["user-agent"],
+            });
             await renderLoginView(provider, res, interaction, {
-                error: "Invalid username or password.",
+                error: invalidLoginMessage,
                 username,
                 status: 401,
             }, explicitUid);
@@ -298,23 +331,22 @@ export const login_wd = async (req: Request, res: Response): Promise<void> => {
         }
 
         const account = await fetchWildDuckAccount(userId);
-        console.log("login_wd account", account);
 
         if (!account.activated || account.suspended || account.disabled) {
+            await recordLoginFailure(username, loginIp, {
+                clientId,
+                userAgent: req.headers["user-agent"],
+            });
             await renderLoginView(provider, res, interaction, {
-                error: "Account is not active. Contact the administrator.",
+                error: invalidLoginMessage,
                 username,
-                status: 403,
+                status: 401,
             }, explicitUid);
             return;
         }
 
         const nowIso = new Date().toISOString();
-        const clientId = interaction.params?.client_id as string | undefined;
-        const loginIp =
-            (typeof req.headers["x-forwarded-for"] === "string"
-                ? req.headers["x-forwarded-for"].split(",")[0]?.trim()
-                : undefined) || req.socket.remoteAddress || undefined;
+        await resetLoginFailures(username, loginIp);
 
         try {
             const { metaData, internalData } = mergeIdpLoginMetadata(account, {

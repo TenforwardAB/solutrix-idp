@@ -1,9 +1,11 @@
 import { Request, Response } from "express";
 import crypto from "node:crypto";
 import jose from "node-jose";
+import { Op } from "sequelize";
 import models, { sequelize } from "../config/db.js";
 import getProvider from "../oidc/provider.js";
 import weakCache from "oidc-provider/lib/helpers/weak_cache.js";
+import { decryptSecret, encryptSecret } from "../services/secretStore.js";
 
 /**
  * Normalize an incoming value into an array of trimmed strings.
@@ -150,7 +152,7 @@ export const createClient = async (req: Request, res: Response): Promise<void> =
             {
                 name,
                 clientId,
-                clientSecret,
+                clientSecret: encryptSecret(clientSecret),
                 redirectUris,
                 grantTypes,
                 scopes,
@@ -240,15 +242,16 @@ export const updateClient = async (req: Request, res: Response): Promise<void> =
             );
         }
         if (req.body.rotate_secret === true) {
-            updates.clientSecret = crypto.randomBytes(32).toString("hex");
+            updates.clientSecret = encryptSecret(crypto.randomBytes(32).toString("hex"));
         }
 
         await client.update(updates, { transaction });
         const payload = client.get({ plain: true }) as any;
+        const responseClientSecret = updates.clientSecret ? decryptSecret(String(updates.clientSecret)) : undefined;
 
         await syncProviderClient({
             clientId: payload.clientId,
-            clientSecret: updates.clientSecret ? String(updates.clientSecret) : payload.clientSecret,
+            clientSecret: responseClientSecret ?? decryptSecret(payload.clientSecret),
             redirectUris: payload.redirectUris,
             grantTypes: payload.grantTypes,
             scopes: payload.scopes,
@@ -268,8 +271,8 @@ export const updateClient = async (req: Request, res: Response): Promise<void> =
             post_logout_redirect_uris: payload.postLogoutRedirectUris,
         };
 
-        if (updates.clientSecret) {
-            response.client_secret = updates.clientSecret;
+        if (responseClientSecret) {
+            response.client_secret = responseClientSecret;
         }
 
         res.json(response);
@@ -423,14 +426,14 @@ export const deleteServiceProvider = async (req: Request, res: Response): Promis
 /**
  * Generate and persist a new RSA signing key pair.
  *
- * @param _req - Request object (unused).
+ * @param req - Request object, optionally with invalidate_previous=true.
  * @param res - Response sending the new key metadata.
  */
-export const rotateSigningKey = async (_req: Request, res: Response): Promise<void> => {
+export const rotateSigningKey = async (req: Request, res: Response): Promise<void> => {
     const keystore = jose.JWK.createKeyStore();
     const key = await keystore.generate("RSA", 2048, { use: "sig", alg: "RS256" });
     const publicKey = key.toPEM();
-    const privateKey = key.toPEM(true);
+    const privateKey = encryptSecret(key.toPEM(true));
     const keyId = crypto.randomBytes(4).toString("hex");
 
     const record = await models.jwt_rsa256_keys.create({
@@ -442,10 +445,23 @@ export const rotateSigningKey = async (_req: Request, res: Response): Promise<vo
 
     await record.reload();
 
+    if (req.body?.invalidate_previous === true) {
+        await models.jwt_rsa256_keys.update(
+            { isInvalid: true },
+            {
+                where: {
+                    isInvalid: false,
+                    keyId: { [Op.ne]: record.get("keyId") },
+                },
+            },
+        );
+    }
+
     res.status(201).json({
         key_id: record.get("keyId"),
         public_key: publicKey,
         created_at: record.get("createdAt"),
+        invalidated_previous: req.body?.invalidate_previous === true,
     });
 };
 
@@ -594,7 +610,7 @@ const registerProviderClient = async (
  *
  * @param client - Client details to synchronize.
  */
-const syncProviderClient = async (client: {
+export const syncProviderClient = async (client: {
     clientId: string;
     clientSecret: string;
     redirectUris: string[];
@@ -647,7 +663,7 @@ const syncProviderClient = async (client: {
  *
  * @param clientId - Client identifier to delete.
  */
-const removeProviderClient = async (clientId: string): Promise<void> => {
+export const removeProviderClient = async (clientId: string): Promise<void> => {
     try {
         const provider = await getProvider();
         await provider.Client.adapter.destroy(clientId);

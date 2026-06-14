@@ -2,10 +2,14 @@
 import type { Sequelize } from "sequelize";
 import { SequelizeMeta as _SequelizeMeta } from "./SequelizeMeta.js";
 import type { SequelizeMetaAttributes, SequelizeMetaCreationAttributes } from "./SequelizeMeta.js";
+import { admin_audit_events as _admin_audit_events } from "./admin_audit_events.js";
+import type { admin_audit_eventsAttributes, admin_audit_eventsCreationAttributes } from "./admin_audit_events.js";
 import { identity_policies as _identity_policies } from "./identity_policies.js";
 import type { identity_policiesAttributes, identity_policiesCreationAttributes } from "./identity_policies.js";
 import { jwt_rsa256_keys as _jwt_rsa256_keys } from "./jwt_rsa256_keys.js";
 import type { jwt_rsa256_keysAttributes, jwt_rsa256_keysCreationAttributes } from "./jwt_rsa256_keys.js";
+import { login_attempts as _login_attempts } from "./login_attempts.js";
+import type { login_attemptsAttributes, login_attemptsCreationAttributes } from "./login_attempts.js";
 import { oidc_adapter_store as _oidc_adapter_store } from "./oidc_adapter_store.js";
 import type { oidc_adapter_storeAttributes, oidc_adapter_storeCreationAttributes } from "./oidc_adapter_store.js";
 import { oidc_clients as _oidc_clients } from "./oidc_clients.js";
@@ -19,8 +23,10 @@ import type { token_exchange_policiesAttributes, token_exchange_policiesCreation
 
 export {
   _SequelizeMeta as SequelizeMeta,
+  _admin_audit_events as admin_audit_events,
   _identity_policies as identity_policies,
   _jwt_rsa256_keys as jwt_rsa256_keys,
+  _login_attempts as login_attempts,
   _oidc_adapter_store as oidc_adapter_store,
   _oidc_clients as oidc_clients,
   _saml_service_providers as saml_service_providers,
@@ -31,10 +37,14 @@ export {
 export type {
   SequelizeMetaAttributes,
   SequelizeMetaCreationAttributes,
+  admin_audit_eventsAttributes,
+  admin_audit_eventsCreationAttributes,
   identity_policiesAttributes,
   identity_policiesCreationAttributes,
   jwt_rsa256_keysAttributes,
   jwt_rsa256_keysCreationAttributes,
+  login_attemptsAttributes,
+  login_attemptsCreationAttributes,
   oidc_adapter_storeAttributes,
   oidc_adapter_storeCreationAttributes,
   oidc_clientsAttributes,
@@ -49,8 +59,10 @@ export type {
 
 export function initModels(sequelize: Sequelize) {
   const SequelizeMeta = _SequelizeMeta.initModel(sequelize);
+  const admin_audit_events = _admin_audit_events.initModel(sequelize);
   const identity_policies = _identity_policies.initModel(sequelize);
   const jwt_rsa256_keys = _jwt_rsa256_keys.initModel(sequelize);
+  const login_attempts = _login_attempts.initModel(sequelize);
   const oidc_adapter_store = _oidc_adapter_store.initModel(sequelize);
   const oidc_clients = _oidc_clients.initModel(sequelize);
   const saml_service_providers = _saml_service_providers.initModel(sequelize);
@@ -60,8 +72,10 @@ export function initModels(sequelize: Sequelize) {
 
   return {
     SequelizeMeta: SequelizeMeta,
+    admin_audit_events: admin_audit_events,
     identity_policies: identity_policies,
     jwt_rsa256_keys: jwt_rsa256_keys,
+    login_attempts: login_attempts,
     oidc_adapter_store: oidc_adapter_store,
     oidc_clients: oidc_clients,
     saml_service_providers: saml_service_providers,

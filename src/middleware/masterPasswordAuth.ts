@@ -1,5 +1,11 @@
 import { Buffer } from "node:buffer";
+import crypto from "node:crypto";
 import { type NextFunction, type Request, type Response } from "express";
+
+const digest = (value: string): Buffer => crypto.createHash("sha256").update(value, "utf8").digest();
+
+const constantTimeEquals = (left: string, right: string): boolean =>
+    crypto.timingSafeEqual(digest(left), digest(right));
 
 /**
  * Simple HTTP Basic auth guard using MASTER_USER / MASTER_PASSWORD.
@@ -32,7 +38,7 @@ export const masterPasswordAuth = (req: Request, res: Response, next: NextFuncti
     const [user, ...rest] = decoded.split(":");
     const password = rest.join(":");
 
-    if (user !== masterUser || password !== masterPassword) {
+    if (!constantTimeEquals(user, masterUser) || !constantTimeEquals(password, masterPassword)) {
         res.status(401).json({ error: "unauthorized" });
         return;
     }

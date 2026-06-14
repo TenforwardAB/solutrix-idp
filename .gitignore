@@ -9,7 +9,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # PEM filer
-# *.pem
+*.pem
 
 # Environment variables
 .env

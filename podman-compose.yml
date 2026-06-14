@@ -11,8 +11,14 @@ services:
     depends_on:
       idpdb:
         condition: service_healthy
+      valkey:
+        condition: service_healthy
     env_file:
       - .env
+    environment:
+      IDP_SECRET_ENCRYPTION_KEY: ${IDP_SECRET_ENCRYPTION_KEY:?set IDP_SECRET_ENCRYPTION_KEY in .env}
+      OIDC_AUTO_GENERATE_SIGNING_KEY: ${OIDC_AUTO_GENERATE_SIGNING_KEY:-true}
+      VALKEY_URL: ${VALKEY_URL:-redis://valkey:6379}
     command: >
       sh -c "npm run migrate && npm run gen:models && if [ \"$NODE_ENV\" = 'development' ]; then npm run dev; else npm start; fi"
     ports:
@@ -38,7 +44,20 @@ services:
       retries: 5
     restart: unless-stopped
 
+  valkey:
+    image: docker.io/valkey/valkey:7-alpine
+    container_name: idp-valkey
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - idp-valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   idpdb-data:
   idp-node-modules:
-
+  idp-valkey-data:

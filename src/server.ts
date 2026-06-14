@@ -7,9 +7,12 @@ import { fileURLToPath } from "node:url";
 import getProvider from "./oidc/provider.js";
 import authRoutes from "./routes/authRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import tenantAdminRoutes from "./routes/tenantAdminRoutes.js";
 import requireAdminApiKey from "./middleware/requireAdminApiKey.js";
 import masterPasswordAuth from "./middleware/masterPasswordAuth.js";
-import { renderAdminGuiPage } from "./views/pages/adminGui.ts";
+import { requireOidcAdmin } from "./middleware/requireOidcAdmin.js";
+import auditBreakGlassAdmin from "./middleware/auditBreakGlassAdmin.js";
+import { renderAdminGuiPage } from "./views/pages/adminGui.js";
 import { renderSwaggerDocsPage } from "./views/pages/swaggerDocs.js";
 
 dotenv.config();
@@ -32,6 +35,14 @@ const requireStrongCookieKeys = (): void => {
     }
 };
 
+const requireSecretEncryptionKey = (): void => {
+    const value = process.env.IDP_SECRET_ENCRYPTION_KEY || "";
+    if (value.length < 32) {
+        console.error("IDP_SECRET_ENCRYPTION_KEY must be set to a 32+ character secret.");
+        process.exit(1);
+    }
+};
+
 const parseCorsOrigins = (): cors.CorsOptions["origin"] => {
     const originsEnv = process.env.CORS_ORIGINS;
     if (!originsEnv) {
@@ -46,6 +57,7 @@ const parseCorsOrigins = (): cors.CorsOptions["origin"] => {
 
 const bootstrap = async (): Promise<void> => {
     requireStrongCookieKeys();
+    requireSecretEncryptionKey();
     const app = express();
     app.disable("x-powered-by");
     app.set("trust proxy", true);
@@ -75,11 +87,12 @@ const bootstrap = async (): Promise<void> => {
 
     const provider = await getProvider();
 
-    app.use("/api/global/admin", requireAdminApiKey, adminRoutes);
+    app.use("/api/global/admin", requireAdminApiKey, auditBreakGlassAdmin, adminRoutes);
+    app.use("/api/admin", requireOidcAdmin, tenantAdminRoutes);
 
     if (enableGui) {
         const guiPageHtml = renderAdminGuiPage(process.env.MASTER_USER ?? "idp_admin");
-        app.use("/gui/api", masterPasswordAuth, adminRoutes);
+        app.use("/gui/api", masterPasswordAuth, auditBreakGlassAdmin, adminRoutes);
         app.get("/gui", masterPasswordAuth, (_req, res) => {
             res.type("html").send(guiPageHtml);
         });

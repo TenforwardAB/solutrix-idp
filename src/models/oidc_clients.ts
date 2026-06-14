@@ -13,11 +13,14 @@ export interface oidc_clientsAttributes {
   createdAt: Date;
   updatedAt: Date;
   postLogoutRedirectUris?: object;
+  customerId?: string;
+  createdBySubject?: string;
+  createdByEmail?: string;
 }
 
 export type oidc_clientsPk = "id";
 export type oidc_clientsId = oidc_clients[oidc_clientsPk];
-export type oidc_clientsOptionalAttributes = "id" | "createdAt" | "updatedAt" | "postLogoutRedirectUris";
+export type oidc_clientsOptionalAttributes = "id" | "createdAt" | "updatedAt" | "postLogoutRedirectUris" | "customerId" | "createdBySubject" | "createdByEmail";
 export type oidc_clientsCreationAttributes = Optional<oidc_clientsAttributes, oidc_clientsOptionalAttributes>;
 
 export class oidc_clients extends Model<oidc_clientsAttributes, oidc_clientsCreationAttributes> implements oidc_clientsAttributes {
@@ -31,6 +34,9 @@ export class oidc_clients extends Model<oidc_clientsAttributes, oidc_clientsCrea
   createdAt!: Date;
   updatedAt!: Date;
   postLogoutRedirectUris?: object;
+  customerId?: string;
+  createdBySubject?: string;
+  createdByEmail?: string;
 
 
   static initModel(sequelize: Sequelize.Sequelize): typeof oidc_clients {
@@ -69,6 +75,21 @@ export class oidc_clients extends Model<oidc_clientsAttributes, oidc_clientsCrea
     postLogoutRedirectUris: {
       type: DataTypes.JSONB,
       allowNull: true
+    },
+    customerId: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      defaultValue: "NULL"
+    },
+    createdBySubject: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      defaultValue: "NULL"
+    },
+    createdByEmail: {
+      type: DataTypes.STRING(320),
+      allowNull: true,
+      defaultValue: "NULL"
     }
   }, {
     sequelize,
@@ -88,6 +109,12 @@ export class oidc_clients extends Model<oidc_clientsAttributes, oidc_clientsCrea
         unique: true,
         fields: [
           { name: "clientId" },
+        ]
+      },
+      {
+        name: "oidc_clients_customerId_idx",
+        fields: [
+          { name: "customerId" },
         ]
       },
       {

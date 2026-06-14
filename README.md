@@ -190,6 +190,10 @@ Current state:
 Important:
 - The server will fail to start if no active signing key exists.
 - Rotate/generate keys via the Admin API endpoint: `POST /api/global/admin/keys/rotate`.
+- Send `{ "invalidate_previous": true }` to mark older signing keys invalid after creating the new key.
+- Private signing keys and client secrets are encrypted at rest with `IDP_SECRET_ENCRYPTION_KEY`.
+- For a fresh development database, set `OIDC_AUTO_GENERATE_SIGNING_KEY=true` to create the first encrypted RS256 key at startup.
+- Keep `IDP_SECRET_ENCRYPTION_KEY` outside git and stable across restarts; changing it requires rotating stored signing keys and client secrets.
 
 ## Admin API
 
@@ -212,6 +216,22 @@ Then call:
 ```bash
 curl -H "$ADMIN_API_KEY_HEADER: $ADMIN_API_KEY" "$IDP_BASE/api/global/admin/clients"
 ```
+
+## Login Abuse Protection
+
+The IDP records failed password logins in PostgreSQL (`login_attempts`) and applies temporary backoff per:
+- normalized username
+- source IP
+- normalized username + source IP
+
+Defaults:
+- `LOGIN_FAILURE_THRESHOLD=5`
+- `LOGIN_FAILURE_RESET_MINUTES=15`
+- backoff steps: 30 seconds, 1 minute, 5 minutes, then 15 minutes max
+
+Successful login clears username and username+IP failures. IP-only failures are retained until the reset window expires so one valid account cannot clear an IP-based attack signal. Keep coarse request-volume limits in the reverse proxy for `/interaction/*/login` and `/oauth/token`.
+
+`podman-compose.yml` also starts Valkey (`VALKEY_URL=redis://valkey:6379`) for future cache/session use. Current brute-force protection uses PostgreSQL so the login path does not depend on Valkey availability.
 
 ### Common Operations
 
@@ -373,4 +393,3 @@ Typecheck only:
 Docs:
 - `http://localhost:8080/docs` (Swagger UI)
 - `http://localhost:8080/.well-known/openid-configuration` (OIDC discovery)
-
